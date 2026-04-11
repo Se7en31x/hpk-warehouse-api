@@ -11,7 +11,15 @@ router.get('/stock-in', ctrl.getStockInReport);
 
 // รายงานแบบ header (document-level)
 router.get('/requisitions', ctrl.getRequisitionReports);
-// router.get('/stockins', ctrl.getStockInReports); // ถ้าไม่ใช้แบบ header ให้คอมเมนต์ไว้
+
+// รายงานแจ้งเตือน
+router.get('/low-stock', ctrl.getLowStockReport);
+
+// รายงานใหม่
+router.get('/reusable-items', ctrl.getReusableItemsReport);
+router.get('/assets', ctrl.getAssetReport);
+router.get('/near-expiry', ctrl.getNearExpiryReport);
+router.get('/inventory-balance', ctrl.getInventoryBalanceSummary);
 
 module.exports = router;
 

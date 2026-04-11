@@ -2,7 +2,6 @@ const express = require('express')
 const router = express.Router()
 
 const unitController = require('../controllers/unit.controller')
-// const { auth, authWarehouse } = require('../middleware/auth');
 
 router.get('/', unitController.getUnits)
 router.get('/option', unitController.getUnitOption)

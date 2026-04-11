@@ -19,8 +19,8 @@ const createHttpError = (statusCode, message) => {
 };
 
 const createReceive = async (data, userSession) => {
-    const createdById = userSession?.user_id || null;
-    const createdByName = userSession?.user_fullname || createdById || 'SYSTEM';
+    const createdById = userSession?.sub || null;
+    const createdByName = userSession?.email || createdById || 'SYSTEM';
 
     return receiveRepo.withTransaction(async (tx) => {
         const headerPayload = DTO.createReceiveHeaderDTO(data, createdById);
@@ -92,8 +92,8 @@ const getReceiveById = async (headerId) => {
 };
 
 const cancelReceive = async (headerId, userSession, reason = '') => {
-    const updatedById = userSession?.user_id || null;
-    const updatedByName = userSession?.user_fullname || updatedById || 'SYSTEM';
+    const updatedById = userSession?.sub || null;
+    const updatedByName = userSession?.email || updatedById || 'SYSTEM';
 
     return receiveRepo.withTransaction(async (tx) => {
         const header = await receiveRepo.SelectReceiveById(headerId, tx);
@@ -167,8 +167,8 @@ const cancelReceive = async (headerId, userSession, reason = '') => {
 };
 
 const confirmReceive = async (headerId, itemsPayload = [], userSession = null) => {
-    const updatedById = userSession?.user_id || null;
-    const updatedByName = userSession?.user_fullname || updatedById || 'SYSTEM';
+    const updatedById = userSession?.sub || null;
+    const updatedByName = userSession?.email || updatedById || 'SYSTEM';
 
     const header = await receiveRepo.SelectReceiveById(headerId);
     if (!header) {

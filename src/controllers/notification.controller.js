@@ -4,9 +4,9 @@ const { runDailyNotificationSweep } = require('../jobs/notification.cron');
 const { getIO, buildUserRoom } = require('../utils/socket');
 
 const resolveRecipientId = (req) => {
+  // req.user.sub is the Supabase UUID set by auth middleware
   return (
-    req.user?.user_id ||
-    req.user?.id ||
+    req.user?.sub ||
     req.query?.recipient_id ||
     req.body?.recipient_id ||
     null
@@ -78,7 +78,7 @@ const markAllRead = async (req, res) => {
 
 const createNotification = async (req, res) => {
   try {
-    const actorId = req.user?.user_id || req.user?.id || null;
+    const actorId = req.user?.sub || null;
     const recipientIds = Array.isArray(req.body?.recipient_ids) ? req.body.recipient_ids : [];
 
     const result = await svc.createManualNotification({
@@ -116,7 +116,7 @@ const runNotificationJobs = async (req, res) => {
     let testCreated = false;
 
     if (testMode) {
-      const actorId = req.user?.user_id || req.user?.id || null;
+      const actorId = req.user?.sub || null;
       let recipientIds = Array.isArray(req.body?.recipient_ids) && req.body.recipient_ids.length
         ? req.body.recipient_ids
         : [resolveRecipientId(req)].filter(Boolean);

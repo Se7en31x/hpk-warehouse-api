@@ -1,6 +1,7 @@
 const express = require('express')
 const router = express.Router()
 
+const { mw } = require('../middleware/auth')
 const healthController = require('../controllers/health.controller')
 const itemRoutes = require('./item.routes')
 const lotRoutes = require('./lot.routes')
@@ -21,10 +22,12 @@ const barcodeRoutes = require('./barcode.routes')
 const settingsRoutes = require('./settings.routes')
 const analyticsRoutes = require('./analytics.routes')
 const reportsRoutes = require('./reports.routes')
+const profileRoutes = require('./profile.routes')
 
 router.get('/health', healthController.check)
 
 const v1 = express.Router()
+v1.use(mw)           // every /v1/* route requires a valid Supabase JWT
 router.use('/v1', v1)
 
 v1.use('/items', itemRoutes)
@@ -46,5 +49,6 @@ v1.use('/barcodes', barcodeRoutes)
 v1.use('/settings', settingsRoutes)
 v1.use('/analytics', analyticsRoutes)
 v1.use('/reports', reportsRoutes)
+v1.use('/user/profile', profileRoutes)
 
 module.exports = router

@@ -16,7 +16,7 @@ const updateSettings = async (req, res) => {
     if (!payload || typeof payload !== 'object') {
       return util.sendResponse(res, 400, 'invalid payload');
     }
-    const updatedBy = req.user?.user_id || req.user?.id || null;
+    const updatedBy = req.user?.sub || null;
     const result = await settingsService.saveAll(payload, updatedBy);
     return util.sendResponse(res, 200, 'settings updated', result);
   } catch (err) {

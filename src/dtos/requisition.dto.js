@@ -1,9 +1,11 @@
 /**
  * 📥 [INPUT] สำหรับเตรียมข้อมูล Header ก่อนบันทึก
+ * เปลี่ยนจาก department (String) เป็น department_id (Int)
  */
 const createHeaderDTO = (data, docNo, createdById, borrowerId) => ({
     doc_no: docNo,
     type: data.type,
+    // แก้ไข: ใช้ department_id และแปลงเป็น Number
     department_id: data.department_id ? Number(data.department_id) : null,
     status: data.status || 'PENDING',
     request_date: data.request_date ? new Date(data.request_date) : new Date(),
@@ -30,7 +32,7 @@ const createItemsDTO = (items, headerId) => {
 };
 
 /**
- * 📤 [OUTPUT - LIST] สำหรับหน้าตาราง (เบาและเร็ว)
+ * 📤 [OUTPUT - LIST] สำหรับหน้าตาราง
  */
 const mapRequisitionListResponse = (data) => {
     if (!data) return null;
@@ -41,7 +43,9 @@ const mapRequisitionListResponse = (data) => {
         status: data.status,
         request_date: data.request_date,
         due_date: data.due_date || null,
+        // แก้ไข: ดึงข้อมูลจาก Relation 'departments'
         department_id: data.department_id,
+        department_name: data.departments?.name || 'ไม่ระบุแผนก',
         requester_id: data.requester_id,
         requester: [
             data.profiles_requisition_header_requester_idToprofiles?.firstname_th,
@@ -54,13 +58,18 @@ const mapRequisitionListResponse = (data) => {
 };
 
 /**
- * 📤 [OUTPUT - DETAIL] สำหรับหน้า Modal (ข้อมูลครบถ้วน)
+ * 📤 [OUTPUT - DETAIL] สำหรับหน้า Modal
  */
 const mapRequisitionDetailResponse = (data) => {
     if (!data) return null;
     return {
         ...mapRequisitionListResponse(data),
-        // ✅ ยุบชั้นข้อมูลสินค้าให้หน้าบ้านเรียก row.name ได้เลย
+        // ✅ ข้อมูลแผนกแบบละเอียด (ถ้าต้องการ)
+        department: data.departments ? {
+            id: data.departments.id,
+            name: data.departments.name,
+            code: data.departments.code
+        } : null,
         items: (data.requisition_item || []).map(ri => ({
             itemType: ri.items?.type || 'CONSUMABLE',
             id: ri.id,

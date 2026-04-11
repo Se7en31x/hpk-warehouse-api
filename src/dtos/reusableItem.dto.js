@@ -1,18 +1,26 @@
 const RECEIVE_TYPE = 'REUSABLE_UNIT';
 
+/**
+ * 📥 [QUERY DTO] สำหรับกรองรายการ Reusable Units
+ */
 const listReusableUnitsQueryDTO = (query = {}) => ({
     page: Math.max(1, Number(query.page) || 1),
     limit: Math.min(100, Math.max(1, Number(query.limit) || 10)),
     keyword: (query.keyword || '').toString().trim(),
     item_id: (query.item_id || '').toString().trim(),
+    // แก้ไข: แปลงเป็น Number เพื่อรองรับ Int ใน DB
     department_id: query.department_id ? Number(query.department_id) : null,
     status: (query.status || '').toString().trim().toUpperCase(),
 });
 
+/**
+ * 📥 [QUERY DTO] สำหรับกรองรายการ Return Requests
+ */
 const listReturnRequestsQueryDTO = (query = {}) => ({
     page: Math.max(1, Number(query.page) || 1),
     limit: Math.min(100, Math.max(1, Number(query.limit) || 10)),
     keyword: (query.keyword || '').toString().trim(),
+    // แก้ไข: แปลงเป็น Number
     department_id: query.department_id ? Number(query.department_id) : null,
     status: (query.status || '').toString().trim().toUpperCase(),
 });
@@ -32,6 +40,9 @@ const parseRequestedUnitCodes = (note = '') => {
     );
 };
 
+/**
+ * 📤 [RESPONSE MAPPER] สำหรับ Reusable Unit (รายชิ้น)
+ */
 const mapReusableUnitResponse = (unit = {}) => ({
     usage_context:
         unit.movement_logs?.[0]?.action === 'ISSUE_BORROW_REUSABLE'
@@ -53,8 +64,9 @@ const mapReusableUnitResponse = (unit = {}) => ({
     receive_item_id: unit.receive_item_id || null,
     receive_doc_no: unit.receive_item?.receive_header?.doc_no || null,
     serial_no: unit.serial_no || null,
+    // แก้ไข: Map ข้อมูลแผนก
     department_id: unit.department_id || null,
-    department_name: unit.departments?.name || null,
+    department_name: unit.departments?.name || null, 
     status: unit.status,
     condition: unit.condition,
     note: unit.note || null,
@@ -62,11 +74,15 @@ const mapReusableUnitResponse = (unit = {}) => ({
     updated_at: unit.updated_at,
 });
 
+/**
+ * 📤 [RESPONSE MAPPER] สำหรับคำขอคืน (Return Request)
+ */
 const mapReturnRequestResponse = (request = {}) => ({
     id: request.id,
     doc_no: request.doc_no,
     department_id: request.department_id,
-    department_name: request.departments?.name || null,
+    // แก้ไข: ดึงชื่อแผนกจาก Relation
+    department_name: request.departments?.name || null, 
     preferred_pickup_at: request.preferred_pickup_at || null,
     contact_name: request.contact_name || null,
     contact_phone: request.contact_phone || null,

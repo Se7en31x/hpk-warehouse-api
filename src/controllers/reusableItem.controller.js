@@ -62,7 +62,7 @@ const createReusableReceive = async (req, res) => {
 const getReusableUnits = async (req, res) => {
     try {
         const query = DTO.listReusableUnitsQueryDTO(req.query);
-        const result = await reusableService.getReusableUnits(query);
+        const result = await reusableService.getReusableUnits(query, req.user || null);
         return util.sendListResponse(res, 200, 'list reusable units success', result);
     } catch (error) {
         return util.sendResponse(res, 500, error.message || 'fetch reusable units failed');
@@ -154,7 +154,7 @@ const createReturnRequest = async (req, res) => {
 const getReturnRequests = async (req, res) => {
     try {
         const query = DTO.listReturnRequestsQueryDTO(req.query);
-        const result = await reusableService.getReturnRequests(query);
+        const result = await reusableService.getReturnRequests(query, req.user || null);
         return util.sendListResponse(res, 200, 'list reusable return requests success', result);
     } catch (error) {
         return util.sendResponse(res, error?.statusCode || 500, error.message || 'fetch return requests failed');

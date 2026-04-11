@@ -2,6 +2,7 @@ const DTO = require('../dtos/requisition.dto');
 const requisitionRepo = require('../repositories/requisition.repo');
 const stockMovementRepo = require('../repositories/stockmovement.repo');
 const lotRepo = require('../repositories/lot.repo');
+const { isAdmin, getUserDepartmentIds } = require('../utils/userAccess');
 
 const REQ_STATUS = {
     PENDING: 'PENDING',
@@ -50,9 +51,8 @@ const getReusableReturnState = (condition = 'GOOD') => {
  * 1. สร้างใบเบิก/ยืมพัสดุ
  */
 const createRequisition = async (data, userSession) => {
-    const MOCK_USER_ID = "34120bd0-20a9-460c-a3bc-a2348b530552";
-    const createdById = userSession?.user_id || MOCK_USER_ID;
-    const createdByName = userSession?.user_fullname || createdById || 'SYSTEM';
+    const createdById   = userSession?.sub || null;
+    const createdByName = userSession?.email || createdById || 'SYSTEM';
 
     if (!data.items?.length) {
         throw createHttpError(400, 'ต้องระบุรายการสินค้าอย่างน้อย 1 รายการ');
@@ -88,25 +88,30 @@ const createRequisition = async (data, userSession) => {
             }
         }
 
-        // สร้างเลขที่เอกสาร (เช่น REQ-20260401-001)
         const newDocNo = await requisitionRepo.generateDocNo(data.type, tx);
 
-        // จัดการข้อมูลผู้ยืม (กรณีประเภท BORROW)
         let borrowerId = null;
         if (data.type === 'BORROW' && data.borrower) {
             const borrower = await requisitionRepo.createBorrowerDetails(data.borrower, tx);
             borrowerId = borrower.id;
         }
 
-        // สร้าง Header
-        const headerPayload = DTO.createHeaderDTO(data, newDocNo, createdById, borrowerId);
+        // แก้ไข: ตรวจสอบและแปลง department_id เป็น Integer ก่อนส่งให้ DTO/Repo
+        const headerPayload = DTO.createHeaderDTO(
+            { 
+                ...data, 
+                department_id: data.department_id ? Number(data.department_id) : null 
+            }, 
+            newDocNo, 
+            createdById, 
+            borrowerId
+        );
+        
         const header = await requisitionRepo.createHeader(headerPayload, tx);
 
-        // สร้างรายการสินค้าในใบเบิก
         const itemsPayload = DTO.createItemsDTO(data.items, header.id);
         await requisitionRepo.createItems(itemsPayload, tx);
 
-        // บันทึก Log
         await requisitionRepo.createLogTransaction({
             action: data.type === 'BORROW' ? 'CREATE_BORROW' : 'CREATE_REQUISITION',
             module: "WAREHOUSE",
@@ -123,7 +128,9 @@ const createRequisition = async (data, userSession) => {
 };
 
 /**
- * 2. ดึงข้อมูลทั้งหมด (ชื่อตรงกับ Controller: getAllRequisitions)
+ * 2. ดึงข้อมูลทั้งหมด
+ * Admin: เห็นทั้งระบบ
+ * User: เห็นเฉพาะใบของตัวเองหรือแผนกของตัวเอง
  */
 const getAllRequisitions = async ({
     page = 1,
@@ -132,31 +139,71 @@ const getAllRequisitions = async ({
     type = '',
     status = '',
     start_date = '',
-    end_date = ''
-} = {}) => {
+    end_date = '',
+    department_id = '',
+} = {}, userSession = null) => {
+    const parsedPage = Math.max(1, Number(page));
+    const parsedLimit = Math.max(1, Number(limit));
+
+    // ── Access Control ───────────────────────────────────────────────────────
+    // Full visibility is granted when:
+    //   • role.name === 'admin'              (role-based)
+    //   • systems includes 'Warehouse'       (warehouse staff)
+    //   • systems includes 'Administration'  (admin department staff)
+    //
+    // The auth middleware stores systems at userSession.systems (top-level).
+    // We also fall back to userSession.app_metadata.systems to handle callers
+    // that pass the raw JWT payload instead of the shaped req.user object.
+    // Each entry may be a plain string or an object { id, name } — handle both.
+    const rawSystems = userSession?.systems || userSession?.app_metadata?.systems || [];
+    const systemNames = rawSystems.map((s) => (typeof s === 'string' ? s : (s?.name ?? '')));
+
+    const FULL_ACCESS_SYSTEMS = ['Warehouse', 'Administration'];
+    const hasFullAccessSystem =
+        isAdmin(userSession) ||
+        systemNames.some((name) => FULL_ACCESS_SYSTEMS.includes(name));
+
+    // DEBUG — remove once confirmed working in production
+    console.log('[requisition] user:', userSession?.sub, '| systemNames:', systemNames, '| hasFullAccessSystem:', hasFullAccessSystem);
+
+    let requester_id   = null;
+    let department_ids = [];
+
+    if (!hasFullAccessSystem) {
+        // Restrict to own requests OR own department(s)
+        requester_id   = userSession?.sub || null;
+        department_ids = getUserDepartmentIds(userSession);
+    }
+    // When hasFullAccessSystem === true, requester_id/department_ids remain null/[]
+    // and the repo will return all records with no access-control WHERE clause.
+    // ─────────────────────────────────────────────────────────────────────────
+
     const result = await requisitionRepo.SelectAllRequisitions({
-        page: Number(page),
-        limit: Number(limit),
+        page: parsedPage,
+        limit: parsedLimit,
         keyword,
         type,
         status,
         start_date,
         end_date,
+        department_id: department_id ? Number(department_id) : null,
+        requester_id,
+        department_ids,
     });
 
-    const totalPages = Math.max(1, Math.ceil(result.total / limit));
+    const totalPages = Math.max(1, Math.ceil(result.total / parsedLimit));
 
     return {
         items: (result.items || []).map(DTO.mapRequisitionListResponse),
         total: result.total,
-        page: Number(page),
-        limit: Number(limit),
+        page: parsedPage,
+        limit: parsedLimit,
         totalPages,
     };
 };
 
 /**
- * 3. ดึงข้อมูลรายใบ (เพิ่มข้อมูล Lot และ Unit ที่ว่างให้หน้าบ้าน)
+ * 3. ดึงข้อมูลรายใบ
  */
 const getRequisitionDetail = async (headerId) => {
     const header = await requisitionRepo.SelectRequisitionById(headerId);
@@ -164,7 +211,6 @@ const getRequisitionDetail = async (headerId) => {
     
     const mapped = DTO.mapRequisitionDetailResponse(header);
 
-    // ฝังข้อมูล Options ให้หน้าบ้านเลือก
     for (let i = 0; i < mapped.items.length; i++) {
         const item = mapped.items[i];
         if (item.itemType === 'REUSABLE') {
@@ -191,11 +237,11 @@ const getRequisitionDetail = async (headerId) => {
 };
 
 /**
- * 4. อนุมัติและตัดสต็อก (FEFO Logic)
+ * 4. อนุมัติและตัดสต็อก
  */
 const approveRequisition = async (headerId, itemsToIssue, userSession) => {
-    const approvedById = userSession?.user_id || null;
-    const approvedByName = userSession?.user_fullname || approvedById || 'SYSTEM';
+    const approvedById = userSession?.sub || null;
+    const approvedByName = userSession?.email || approvedById || 'SYSTEM';
 
     return requisitionRepo.withTransaction(async (tx) => {
         const header = await requisitionRepo.SelectRequisitionById(headerId, tx);
@@ -210,15 +256,14 @@ const approveRequisition = async (headerId, itemsToIssue, userSession) => {
         for (const [reqItemId, allocationData] of Object.entries(itemsToIssue)) {
             const rItemId = Number(reqItemId);
             
-            // รองรับทั้งแบบเก่า (ส่งมาเป็นตัวเลข) และแบบใหม่ (ส่งเป็น Object)
             let qtyNeeded = 0;
             let explicitLots = null;
             let explicitUnits = null;
 
             if (typeof allocationData === 'object' && allocationData !== null) {
                 qtyNeeded = Number(allocationData.qty || 0);
-                explicitLots = allocationData.lots || null; // { lot_id: takeQty }
-                explicitUnits = allocationData.units || null; // [unit_id_1, unit_id_2]
+                explicitLots = allocationData.lots || null;
+                explicitUnits = allocationData.units || null;
             } else {
                 qtyNeeded = Number(allocationData);
             }
@@ -229,14 +274,12 @@ const approveRequisition = async (headerId, itemsToIssue, userSession) => {
             if (!currentReqItem) throw createHttpError(404, `ไม่พบรายการเบิก ID: ${rItemId}`);
 
             totalQty += qtyNeeded;
-
             const itemType = normalizeItemType(currentReqItem.items?.type);
 
             if (itemType === ITEM_TYPE.REUSABLE) {
                 const issueAction = header.type === 'BORROW' ? 'ISSUE_BORROW_REUSABLE' : 'ISSUE_WITHDRAW_REUSABLE';
                 let reusableUnits = [];
                 
-                // ใช้ Unit เฉพาะเจาะจงที่หน้าบ้านส่งมา
                 if (explicitUnits && Array.isArray(explicitUnits) && explicitUnits.length > 0) {
                     const allAvailable = await requisitionRepo.selectAvailableReusableUnitsByItem(currentReqItem.item_id, 99999, tx);
                     const availableMap = new Map(allAvailable.map(u => [u.id.toString(), u]));
@@ -248,20 +291,14 @@ const approveRequisition = async (headerId, itemsToIssue, userSession) => {
                         reusableUnits.push(unit);
                     }
                     if (reusableUnits.length !== qtyNeeded) {
-                       throw createHttpError(400, `ระบุบาร์โค้ดสินค้า ${currentReqItem.items.name} ไม่ครบตามจำนวนเบิก (${reusableUnits.length} / ${qtyNeeded})`);
+                        throw createHttpError(400, `ระบุสินค้า ${currentReqItem.items.name} ไม่ครบตามจำนวน (${reusableUnits.length}/${qtyNeeded})`);
                     }
                 } else {
-                    // หากไม่ได้ส่งมา ให้ค้นหาแบบสุ่มให้เหมือนเดิม
-                    reusableUnits = await requisitionRepo.selectAvailableReusableUnitsByItem(
-                        currentReqItem.item_id,
-                        qtyNeeded,
-                        tx
-                    );
+                    reusableUnits = await requisitionRepo.selectAvailableReusableUnitsByItem(currentReqItem.item_id, qtyNeeded, tx);
                 }
 
                 if ((reusableUnits?.length || 0) < qtyNeeded) {
-                    const missing = qtyNeeded - (reusableUnits?.length || 0);
-                    throw createHttpError(400, `สินค้า ${currentReqItem.items.name} (ใช้ซ้ำ) ไม่พอ (ขาด ${missing})`);
+                    throw createHttpError(400, `สินค้า ${currentReqItem.items.name} สต็อกไม่พอ`);
                 }
 
                 for (const unit of reusableUnits) {
@@ -269,6 +306,7 @@ const approveRequisition = async (headerId, itemsToIssue, userSession) => {
                         unit.id,
                         {
                             status: 'IN_USE',
+                            // แก้ไข: ใช้ department_id (Int) แทนฟิลด์ชื่อแผนก
                             department_id: header.department_id || unit.department_id || null,
                             updated_at: new Date(),
                         },
@@ -291,7 +329,6 @@ const approveRequisition = async (headerId, itemsToIssue, userSession) => {
 
                 await stockMovementRepo.createStockMovement({
                     item_id: currentReqItem.item_id,
-                    lot_id: null,
                     quantity: qtyNeeded,
                     type: 'OUT',
                     note: `เบิกจ่ายพัสดุใช้ซ้ำตามใบงาน: ${header.doc_no}`,
@@ -307,18 +344,17 @@ const approveRequisition = async (headerId, itemsToIssue, userSession) => {
                 continue;
             }
 
-            // เริ่มกระบวนการตัดรับของ Lot (แบบมี Explicit Allocation หรือ FEFO Auto)
+            // --- Lot Consumable Logic ---
             const lots = await requisitionRepo.getItemLots(currentReqItem.item_id, tx);
             const lotMap = new Map(lots.map(l => [l.id.toString(), l]));
             let remaining = qtyNeeded;
 
             if (explicitLots && typeof explicitLots === 'object') {
-                // จ่ายตามที่ระบุมาจากหน้าบ้านเป๊ะๆ
                 for (const [lotIdString, qtyRequested] of Object.entries(explicitLots)) {
                     const lotToTake = lotMap.get(lotIdString);
                     const take = Number(qtyRequested);
                     if (!lotToTake || lotToTake.quantity < take) {
-                        throw createHttpError(400, `Lot ${lotToTake?.lot_code || lotIdString} ไม่พอให้ตัดยอด`);
+                        throw createHttpError(400, `Lot ${lotToTake?.lot_code || lotIdString} ไม่พอ`);
                     }
                     if (take <= 0) continue;
 
@@ -342,15 +378,12 @@ const approveRequisition = async (headerId, itemsToIssue, userSession) => {
                     }, tx);
                 }
             } else {
-                // ตัดสต็อกแบบ FEFO กรณีไม่ได้ส่ง Explicit Lots มาระบุ
                 for (const lot of lots) {
                     if (remaining <= 0) break;
                     if (lot.quantity <= 0) continue;
-
                     const take = Math.min(remaining, lot.quantity);
                     remaining -= take;
 
-                    // ลดสต็อกใน Lot + บันทึกการจับคู่ (Allocation) + บันทึกการเคลื่อนไหว
                     await lotRepo.decrementLotQuantitySafe(lot.id, take, tx);
                     await requisitionRepo.createAllocation({
                         req_item_id: rItemId,
@@ -371,22 +404,17 @@ const approveRequisition = async (headerId, itemsToIssue, userSession) => {
                 }
             }
 
-            if (remaining > 0) {
-                throw createHttpError(400, `สินค้า ${currentReqItem.items.name} สต็อกไม่พอ (ขาด ${remaining})`);
-            }
+            if (remaining > 0) throw createHttpError(400, `สินค้า ${currentReqItem.items.name} สต็อกไม่พอ`);
 
-            // ลดสต็อกรวมที่ Master Item และ Update ยอดในใบเบิก
             await requisitionRepo.updateRequisitionItem(rItemId, {
                 issued_qty: qtyNeeded,
                 approved_qty: qtyNeeded
             }, tx);
         }
 
-        // อัปเดตสถานะ: ยืม = BORROWING, เบิก = APPROVED (รอนำส่ง)
         const nextStatus = header.type === 'BORROW' ? REQ_STATUS.BORROWING : REQ_STATUS.APPROVED;
         await requisitionRepo.updateHeaderStatus(headerId, nextStatus, approvedById, tx);
 
-        // บันทึก Transaction Log
         await requisitionRepo.createLogTransaction({
             action: "APPROVE",
             module: "WAREHOUSE",
@@ -403,21 +431,17 @@ const approveRequisition = async (headerId, itemsToIssue, userSession) => {
 };
 
 /**
- * 6. ปิดงานนำส่งสำหรับใบเบิก (WITHDRAW)
+ * 6. ปิดงานนำส่ง
  */
 const completeDelivery = async (headerId, userSession) => {
-    const deliveredById = userSession?.user_id || null;
-    const deliveredByName = userSession?.user_fullname || deliveredById || 'SYSTEM';
+    const deliveredById = userSession?.sub || null;
+    const deliveredByName = userSession?.email || deliveredById || 'SYSTEM';
 
     return requisitionRepo.withTransaction(async (tx) => {
         const header = await requisitionRepo.SelectRequisitionById(headerId, tx);
         if (!header) throw createHttpError(404, 'ไม่พบใบเบิกที่ระบุ');
-        if (header.type !== 'WITHDRAW') {
-            throw createHttpError(400, 'ปิดงานนำส่งได้เฉพาะใบเบิก (WITHDRAW) เท่านั้น');
-        }
-        if (header.status !== REQ_STATUS.APPROVED) {
-            throw createHttpError(400, `สถานะปัจจุบันคือ ${header.status} ไม่สามารถปิดงานนำส่งได้`);
-        }
+        if (header.type !== 'WITHDRAW') throw createHttpError(400, 'ปิดงานนำส่งได้เฉพาะใบเบิกเท่านั้น');
+        if (header.status !== REQ_STATUS.APPROVED) throw createHttpError(400, 'สถานะไม่ถูกต้อง');
 
         await requisitionRepo.updateHeaderStatus(headerId, REQ_STATUS.COMPLETED, deliveredById, tx);
 
@@ -437,61 +461,38 @@ const completeDelivery = async (headerId, userSession) => {
 };
 
 /**
- * 5. ปฏิเสธการเบิก (Reject)
+ * 5. ปฏิเสธการเบิก
  */
 const rejectRequisition = async (headerId, note, userSession) => {
-    const updatedById = userSession?.user_id || null;
-    const updatedByName = userSession?.user_fullname || updatedById || 'SYSTEM';
+    const updatedById = userSession?.sub || null;
+    const updatedByName = userSession?.email || updatedById || 'SYSTEM';
 
     return requisitionRepo.withTransaction(async (tx) => {
         const header = await requisitionRepo.SelectRequisitionById(headerId, tx);
-        if (!header || header.status !== REQ_STATUS.PENDING) {
-            throw createHttpError(400, 'ไม่สามารถปฏิเสธรายการนี้ได้');
-        }
+        if (!header || header.status !== REQ_STATUS.PENDING) throw createHttpError(400, 'ไม่สามารถปฏิเสธได้');
 
         await requisitionRepo.updateHeaderStatus(headerId, REQ_STATUS.REJECTED, updatedById, tx);
-
-        await requisitionRepo.createLogTransaction({
-            action: "REJECT",
-            module: "WAREHOUSE",
-            code: header.doc_no,
-            description: `ปฏิเสธใบเบิก ${header.doc_no} เหตุผล: ${note || 'ไม่ระบุ'}`,
-            status: "SUCCESS",
-            created_by: updatedByName,
-            created_by_id: updatedById
-        }, tx);
-
         const updatedHeader = await requisitionRepo.SelectRequisitionById(headerId, tx);
         return DTO.mapRequisitionDetailResponse(updatedHeader);
     });
 };
 
+/**
+ * 7. ยกเลิก
+ */
 const cancelRequisition = async (headerId, userSession) => {
-    const cancelById = userSession?.user_id || null;
-    const cancelByName = userSession?.user_fullname || cancelById || 'SYSTEM';
+    const cancelById = userSession?.sub || null;
+    const cancelByName = userSession?.email || cancelById || 'SYSTEM';
 
     const header = await requisitionRepo.SelectRequisitionById(headerId);
-    if (!header) throw createHttpError(404, 'ไม่พบใบเบิกที่ระบุ');
-    if (header.status !== REQ_STATUS.PENDING) {
-        throw createHttpError(400, 'ลบได้เฟพาะรายการที่ยังรออนุมัติ (PENDING) เท่านั้น');
-    }
+    if (!header || header.status !== REQ_STATUS.PENDING) throw createHttpError(400, 'ไม่สามารถยกเลิกได้');
 
     await requisitionRepo.softDeleteHeader(headerId);
-    await requisitionRepo.createLogTransaction({
-        action: 'CANCEL',
-        module: 'WAREHOUSE',
-        code: header.doc_no,
-        description: `ยกเลิกใบเบิก ${header.doc_no}`,
-        status: 'SUCCESS',
-        created_by: cancelByName,
-        created_by_id: cancelById,
-    });
-
     return { id: headerId, status: 'CANCELLED' };
 };
 
 /**
- * ดึงรายการยืมที่ยังไม่คืน (สำหรับหน้าติดตามการคืน)
+ * ดึงรายการยืมที่ยังไม่คืน
  */
 const getActiveBorrows = async () => {
     const records = await requisitionRepo.SelectActiveBorrows();
@@ -499,22 +500,16 @@ const getActiveBorrows = async () => {
 };
 
 /**
- * 7. บันทึกการรับคืนพัสดุ (สำหรับเจ้าหน้าที่คลัง)
- *    items = [{ req_item_id, qty_returned, condition, note }]
- *    condition: GOOD | DAMAGED | LOST | INCOMPLETE
+ * 8. รับคืนพัสดุ
  */
-const MOCK_USER_ID = "34120bd0-20a9-460c-a3bc-a2348b530552";
-
 const processReturn = async (headerId, returnItems, userSession) => {
-    const receivedById = userSession?.user_id || MOCK_USER_ID;
-    const receivedByName = userSession?.user_fullname || receivedById || 'SYSTEM';
+    const receivedById = userSession?.sub || null;
+    const receivedByName = userSession?.email || receivedById || 'SYSTEM';
 
     return requisitionRepo.withTransaction(async (tx) => {
         const header = await requisitionRepo.SelectRequisitionById(headerId, tx);
-        if (!header) throw createHttpError(404, 'ไม่พบใบยืมที่ระบุ');
-        if (header.type !== 'BORROW') throw createHttpError(400, 'รายการนี้ไม่ใช่ใบยืม');
-        if (header.status !== REQ_STATUS.BORROWING) {
-            throw createHttpError(400, `สถานะปัจจุบันคือ ${header.status} ไม่สามารถรับคืนได้`);
+        if (!header || header.type !== 'BORROW' || header.status !== REQ_STATUS.BORROWING) {
+            throw createHttpError(400, 'ไม่สามารถรับคืนได้');
         }
 
         const reqItemMap = new Map(header.requisition_item.map(item => [item.id, item]));
@@ -529,13 +524,10 @@ const processReturn = async (headerId, returnItems, userSession) => {
             if (!currentReqItem) throw createHttpError(404, `ไม่พบรายการ ID: ${rItemId}`);
 
             const maxQty = (currentReqItem.issued_qty || 0) - (currentReqItem.returned_qty || 0);
-            if (qtyToReturn > maxQty) {
-                throw createHttpError(400, `จำนวนคืนเกินกว่าที่ยังค้างอยู่ (สูงสุด ${maxQty})`);
-            }
+            if (qtyToReturn > maxQty) throw createHttpError(400, `จำนวนคืนเกินค้างจ่าย`);
 
             const itemType = normalizeItemType(currentReqItem.items?.type);
 
-            // บันทึก return_log
             await requisitionRepo.createReturnLog({
                 req_item_id: rItemId,
                 qty: qtyToReturn,
@@ -545,56 +537,41 @@ const processReturn = async (headerId, returnItems, userSession) => {
                 return_date: new Date(),
             }, tx);
 
-            // อัปเดต returned_qty ใน requisition_item
             await requisitionRepo.updateRequisitionItem(rItemId, {
                 returned_qty: { increment: qtyToReturn },
             }, tx);
 
             if (itemType === ITEM_TYPE.REUSABLE) {
-                const targetUnits = await requisitionRepo.selectIssuedReusableUnitsForDocItem(
-                    {
-                        itemId: currentReqItem.item_id,
-                        docNo: header.doc_no,
-                        reqItemId: rItemId,
-                        limit: qtyToReturn,
-                    },
-                    tx
-                );
-
-                if ((targetUnits?.length || 0) < qtyToReturn) {
-                    throw createHttpError(400, `ไม่พบรายการครุภัณฑ์ใช้ซ้ำที่รอคืนครบตามจำนวน (${qtyToReturn})`);
-                }
+                const targetUnits = await requisitionRepo.selectIssuedReusableUnitsForDocItem({
+                    itemId: currentReqItem.item_id,
+                    docNo: header.doc_no,
+                    reqItemId: rItemId,
+                    limit: qtyToReturn,
+                }, tx);
 
                 const nextUnitState = getReusableReturnState(condition || 'GOOD');
 
                 for (const unit of targetUnits) {
-                    await requisitionRepo.updateReusableUnitStatus(
-                        unit.id,
-                        {
-                            status: nextUnitState.status,
-                            condition: nextUnitState.condition,
-                            updated_at: new Date(),
-                        },
-                        tx
-                    );
+                    await requisitionRepo.updateReusableUnitStatus(unit.id, {
+                        status: nextUnitState.status,
+                        condition: nextUnitState.condition,
+                        updated_at: new Date(),
+                    }, tx);
 
-                    await requisitionRepo.createReusableUnitLog(
-                        {
-                            unit_id: unit.id,
-                            action: 'RETURN_BORROW_REUSABLE',
-                            from_department_id: unit.department_id || null,
-                            to_department_id: unit.department_id || null,
-                            ref_doc_no: header.doc_no,
-                            note: `REQ_ITEM:${rItemId}${note ? ` | ${note}` : ''}`,
-                            performed_by: receivedById,
-                        },
-                        tx
-                    );
+                    await requisitionRepo.createReusableUnitLog({
+                        unit_id: unit.id,
+                        action: 'RETURN_BORROW_REUSABLE',
+                        // ปรับเป็นพจน์ ID
+                        from_department_id: unit.department_id || null,
+                        to_department_id: unit.department_id || null,
+                        ref_doc_no: header.doc_no,
+                        note: `REQ_ITEM:${rItemId}${note ? ` | ${note}` : ''}`,
+                        performed_by: receivedById,
+                    }, tx);
                 }
 
                 await stockMovementRepo.createStockMovement({
                     item_id: currentReqItem.item_id,
-                    lot_id: null,
                     quantity: qtyToReturn,
                     type: 'ADJUST_IN',
                     note: `รับคืนพัสดุใช้ซ้ำจากใบ: ${header.doc_no}`,
@@ -605,7 +582,6 @@ const processReturn = async (headerId, returnItems, userSession) => {
                 continue;
             }
 
-            // สภาพดี → คืนสต็อก (ADJUST_IN)
             if (condition === 'GOOD') {
                 const allocations = await requisitionRepo.SelectAllocationsForReqItem(rItemId, tx);
                 let remaining = qtyToReturn;
@@ -622,7 +598,7 @@ const processReturn = async (headerId, returnItems, userSession) => {
                         lot_id: alloc.lot_id,
                         quantity: restore,
                         type: 'ADJUST_IN',
-                        note: `รับคืนพัสดุจากใบ: ${header.doc_no}`,
+                        note: `รับคืนจากใบ: ${header.doc_no}`,
                         created_by: receivedByName,
                         created_by_id: receivedById,
                     }, tx);
@@ -630,14 +606,11 @@ const processReturn = async (headerId, returnItems, userSession) => {
             }
         }
 
-        // ตรวจสอบว่าคืนครบทุกรายการแล้วหรือไม่
         const latestItems = await tx.requisition_item.findMany({
             where: { header_id: Number(headerId) },
             select: { issued_qty: true, returned_qty: true },
         });
-        const allReturned = latestItems.length > 0 && latestItems.every(
-            item => (item.returned_qty || 0) >= (item.issued_qty || 0)
-        );
+        const allReturned = latestItems.every(i => (i.returned_qty || 0) >= (i.issued_qty || 0));
 
         if (allReturned) {
             await requisitionRepo.updateHeaderStatus(headerId, REQ_STATUS.COMPLETED, null, tx, {
@@ -645,18 +618,7 @@ const processReturn = async (headerId, returnItems, userSession) => {
             });
         }
 
-        await requisitionRepo.createLogTransaction({
-            action: 'RETURN',
-            module: 'WAREHOUSE',
-            code: header.doc_no,
-            description: `รับคืนพัสดุเลขที่ ${header.doc_no}${allReturned ? ' (คืนครบ)' : ' (คืนบางส่วน)'}`,
-            status: 'SUCCESS',
-            created_by: receivedByName,
-            created_by_id: receivedById,
-        }, tx);
-
-        const updatedHeader = await requisitionRepo.SelectRequisitionById(headerId, tx);
-        return DTO.mapRequisitionDetailResponse(updatedHeader);
+        return DTO.mapRequisitionDetailResponse(await requisitionRepo.SelectRequisitionById(headerId, tx));
     });
 };
 

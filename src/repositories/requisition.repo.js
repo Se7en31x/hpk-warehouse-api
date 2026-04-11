@@ -2,32 +2,76 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 // --- Helper: Search Filter ---
-const buildRequisitionWhere = ({ keyword = '', type = '', status = '', start_date = '', end_date = '', department_code = '' } = {}) => {
-    const where = {};
+/**
+ * Builds a Prisma `where` clause for requisition queries.
+ * Uses AND-of-ORs to combine keyword search with access-control conditions cleanly.
+ *
+ * @param {object} opts
+ * @param {string}   opts.keyword
+ * @param {string}   opts.type
+ * @param {string}   opts.status
+ * @param {string}   opts.start_date
+ * @param {string}   opts.end_date
+ * @param {number|null} opts.department_id  — explicit single-dept filter (admin override)
+ * @param {string|null} opts.requester_id   — non-admin: filter to own records
+ * @param {number[]}    opts.department_ids — non-admin: user's allowed dept IDs
+ */
+const buildRequisitionWhere = ({
+    keyword = '',
+    type = '',
+    status = '',
+    start_date = '',
+    end_date = '',
+    department_id = null,
+    requester_id = null,
+    department_ids = [],
+} = {}) => {
+    // We collect top-level AND conditions so keyword + access-control compose cleanly
+    const andConditions = [];
     const normalizedKeyword = (keyword || '').trim();
-    
-    if (type) where.type = type;
-    if (status) where.status = status;
-    if (department_code) where.department_code = department_code;
 
+    // Simple equality filters
+    if (type)   andConditions.push({ type });
+    if (status) andConditions.push({ status });
+
+    // Explicit department filter (takes precedence over role-based dept list)
+    if (department_id) {
+        andConditions.push({ department_id: Number(department_id) });
+    }
+
+    // Keyword full-text search (OR across multiple fields)
     if (normalizedKeyword) {
-        where.OR = [
-            { doc_no: { contains: normalizedKeyword, mode: 'insensitive' } },
-            { note: { contains: normalizedKeyword, mode: 'insensitive' } },
-            { department_name: { contains: normalizedKeyword, mode: 'insensitive' } },
-        ];
+        andConditions.push({
+            OR: [
+                { doc_no:  { contains: normalizedKeyword, mode: 'insensitive' } },
+                { note:    { contains: normalizedKeyword, mode: 'insensitive' } },
+                { departments: { name: { contains: normalizedKeyword, mode: 'insensitive' } } },
+            ],
+        });
     }
 
+    // Date range
     const startDate = start_date ? new Date(start_date) : null;
-    const endDate = end_date ? new Date(end_date) : null;
-
+    const endDate   = end_date   ? new Date(end_date)   : null;
     if (startDate || endDate) {
-        where.request_date = {
-            gte: startDate || undefined,
-            lte: endDate || undefined,
-        };
+        andConditions.push({
+            request_date: {
+                ...(startDate && { gte: startDate }),
+                ...(endDate   && { lte: endDate }),
+            },
+        });
     }
-    return where;
+
+    // Role-based access control: non-admin users see own records OR their department records.
+    // Only applied when no explicit department_id override is in effect.
+    if (!department_id && (requester_id || department_ids.length > 0)) {
+        const accessOr = [];
+        if (requester_id)          accessOr.push({ requester_id });
+        if (department_ids.length) accessOr.push({ department_id: { in: department_ids } });
+        andConditions.push({ OR: accessOr });
+    }
+
+    return andConditions.length ? { AND: andConditions } : {};
 };
 
 // --- Transaction Wrapper ---
@@ -60,6 +104,7 @@ const generateDocNo = async (type, tx = prisma) => {
 };
 
 const createHeader = (payload, tx = prisma) => {
+    // payload ควรมี department_id เป็น Number
     return tx.requisition_header.create({ 
         data: payload 
     });
@@ -108,6 +153,8 @@ const SelectRequisitionById = async (id, tx = prisma) => {
     return tx.requisition_header.findUnique({
         where: { id: Number(id) },
         include: {
+            // Join ข้อมูลแผนก
+            departments: true, 
             requisition_item: { 
                 include: {
                     items: {
@@ -133,14 +180,29 @@ const SelectRequisitionById = async (id, tx = prisma) => {
     });
 };
 
-const SelectAllRequisitions = async ({ page = 1, limit = 10, keyword = '', type = '', status = '', start_date = '', end_date = '' } = {}) => {
-    const where = buildRequisitionWhere({ keyword, type, status, start_date, end_date });
+const SelectAllRequisitions = async ({
+    page = 1,
+    limit = 10,
+    keyword = '',
+    type = '',
+    status = '',
+    start_date = '',
+    end_date = '',
+    department_id = null,
+    requester_id = null,
+    department_ids = [],
+} = {}) => {
+    const where = buildRequisitionWhere({ keyword, type, status, start_date, end_date, department_id, requester_id, department_ids });
     const skip = (page - 1) * limit;
 
     const [items, total] = await prisma.$transaction([
         prisma.requisition_header.findMany({
             where,
             include: {
+                // Join เอาชื่อแผนกมาแสดงผล
+                departments: {
+                    select: { name: true, code: true }
+                },
                 _count: {
                     select: { requisition_item: true }
                 },
@@ -175,7 +237,7 @@ const getItemLots = async (itemId, tx = prisma) => {
             deleted_at: null,
         },
         orderBy: [
-            { expired_at: 'asc' }, // FEFO: หมดอายุก่อน จ่ายก่อน
+            { expired_at: 'asc' }, 
             { created_at: 'asc' },
         ],
     });
@@ -224,7 +286,6 @@ const selectIssuedReusableUnitsForDocItem = async ({ itemId, docNo, reqItemId, i
     });
 };
 
-
 const updateRequisitionItem = async (id, data, tx = prisma) => {
     return tx.requisition_item.update({
         where: { id: Number(id) },
@@ -270,7 +331,6 @@ const softDeleteHeader = async (id, tx = prisma) => {
     });
 };
 
-// รายการยืมที่อยู่ระหว่างดำเนินการ (BORROW + BORROWING) — สำหรับหน้าคืนรายการ
 const SelectActiveBorrows = async () => {
     return prisma.requisition_header.findMany({
         where: {
@@ -278,13 +338,17 @@ const SelectActiveBorrows = async () => {
             status: 'BORROWING',
         },
         include: {
+            // Join แผนกในหน้ารายการค้างคืน
+            departments: {
+                select: { name: true }
+            },
             _count: { select: { requisition_item: true } },
             profiles_requisition_header_requester_idToprofiles: {
                 select: { firstname_th: true, lastname_th: true }
             },
             borrower_details: true,
         },
-        orderBy: { due_date: 'asc' }, // ค้างคืนมากที่สุดขึ้นก่อน
+        orderBy: { due_date: 'asc' }, 
     });
 };
 

@@ -117,10 +117,20 @@ const selectRecipientIdsByRoles = async (roles = [], tx = prisma) => {
   );
   if (!normalizedRoles.length) return [];
 
+  // Step 1: resolve role codes → role IDs (profiles.role_id is Int, roles.code is the string key)
+  const roleRows = await tx.roles.findMany({
+    where: { code: { in: normalizedRoles } },
+    select: { id: true },
+  });
+  if (!roleRows.length) return [];
+
+  const roleIds = roleRows.map((r) => r.id);
+
+  // Step 2: find active profiles that carry one of those role IDs
   const rows = await tx.profiles.findMany({
     where: {
       deleted_at: null,
-      role: { in: normalizedRoles },
+      role_id: { in: roleIds },
     },
     select: { id: true },
   });

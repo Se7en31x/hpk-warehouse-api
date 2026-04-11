@@ -1,5 +1,6 @@
 const DTO = require('../dtos/reusableItem.dto');
 const reusableRepo = require('../repositories/reusableItem.repo');
+const { isAdmin, getUserDepartmentIds } = require('../utils/userAccess');
 
 const RECEIVE_STATUS = {
     COMPLETED: 'COMPLETED',
@@ -81,6 +82,7 @@ const enrichReturnRequestWithUnitDetails = async (mappedRequest, tx = null) => {
 
     const unitRows = await reusableRepo.selectUnitsByCodes(
         {
+            // แก้ไข: ใช้ department_id
             departmentId: mappedRequest.department_id,
             unitCodes: allCodes,
         },
@@ -133,7 +135,7 @@ const generateUnitCodes = async (count, tx) => {
 };
 
 const createReusableReceive = async (data, userSession) => {
-    const createdById = userSession?.user_id || null;
+    const createdById = userSession?.sub || null;
 
     return reusableRepo.withTransaction(async (tx) => {
         const header = await reusableRepo.createReceiveHeader(
@@ -172,7 +174,8 @@ const createReusableReceive = async (data, userSession) => {
                     item_id: item.item_id,
                     receive_item_id: receiveItemByItemId.get(item.item_id)?.id || null,
                     serial_no: unit.serial_no || null,
-                    department_id: unit.department_id || null,
+                    // แก้ไข: เปลี่ยนจาก department เป็น department_id
+                    department_id: unit.department_id ? Number(unit.department_id) : null,
                     status: (unit.status || DEFAULT_STATUS).toUpperCase(),
                     condition: (unit.condition || DEFAULT_CONDITION).toUpperCase(),
                     note: unit.note || null,
@@ -208,18 +211,35 @@ const createReusableReceive = async (data, userSession) => {
     });
 };
 
-const getReusableUnits = async (query = {}) => {
-    const [items, total] = await reusableRepo.selectReusableUnits(query);
-    const totalPages = Math.max(1, Math.ceil(total / query.limit));
+/**
+ * List reusable units with role-based access control.
+ * Admin: all units.
+ * Non-admin: units belonging to their departments (unless explicit department_id filter).
+ */
+const getReusableUnits = async (query = {}, userSession = null) => {
+    const resolvedQuery = { ...query };
+
+    if (!isAdmin(userSession)) {
+        const deptIds = getUserDepartmentIds(userSession);
+        // Only inject dept filter when no explicit single-dept filter was provided
+        if (!resolvedQuery.department_id && deptIds.length > 0) {
+            resolvedQuery.department_ids = deptIds;
+        }
+    }
+
+    const [items, total] = await reusableRepo.selectReusableUnits(resolvedQuery);
+    const limit = resolvedQuery.limit || 10;
+    const page  = resolvedQuery.page  || 1;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
 
     return {
         items: items.map(DTO.mapReusableUnitResponse),
         total,
-        page: query.page,
-        limit: query.limit,
+        page,
+        limit,
         totalPages,
-        nextPage: query.page < totalPages ? query.page + 1 : null,
-        prevPage: query.page > 1 ? query.page - 1 : null,
+        nextPage: page < totalPages ? page + 1 : null,
+        prevPage: page > 1 ? page - 1 : null,
     };
 };
 
@@ -233,7 +253,7 @@ const getReusableUnitById = async (id) => {
 };
 
 const updateReusableUnit = async (id, data = {}, userSession = null) => {
-    const updatedById = userSession?.user_id || null;
+    const updatedById = userSession?.sub || null;
 
     if (Object.prototype.hasOwnProperty.call(data, 'unit_code')) {
         throw createHttpError(400, 'unit_code is immutable and cannot be edited');
@@ -258,6 +278,7 @@ const updateReusableUnit = async (id, data = {}, userSession = null) => {
                 ...(Object.prototype.hasOwnProperty.call(data, 'serial_no') && {
                     serial_no: data.serial_no ? data.serial_no.toString().trim() : null,
                 }),
+                // แก้ไข: จัดการ department_id (Int)
                 ...(Object.prototype.hasOwnProperty.call(data, 'department_id') && {
                     department_id: data.department_id ? Number(data.department_id) : null,
                 }),
@@ -272,6 +293,7 @@ const updateReusableUnit = async (id, data = {}, userSession = null) => {
             {
                 unit_id: id,
                 action: 'UPDATE',
+                // แก้ไข: ใช้พจน์ ID
                 from_department_id: existing.department_id || null,
                 to_department_id: updated.department_id || null,
                 note: `Update unit ${existing.unit_code}`,
@@ -285,7 +307,7 @@ const updateReusableUnit = async (id, data = {}, userSession = null) => {
 };
 
 const returnReusableFromWithdraw = async (id, data = {}, userSession = null) => {
-    const updatedById = userSession?.user_id || null;
+    const updatedById = userSession?.sub || null;
     const conditionInput = (data.condition || 'GOOD').toString().trim().toUpperCase();
 
     return reusableRepo.withTransaction(async (tx) => {
@@ -316,7 +338,7 @@ const returnReusableFromWithdraw = async (id, data = {}, userSession = null) => 
             {
                 status: nextStatus,
                 condition: nextCondition === 'INCOMPLETE' ? 'DAMAGED' : nextCondition,
-                department_id: null,
+                department_id: null, // คืนสต็อกกลาง department_id เป็น null
                 ...(Object.prototype.hasOwnProperty.call(data, 'note') && { note: data.note || null }),
             },
             tx
@@ -340,12 +362,11 @@ const returnReusableFromWithdraw = async (id, data = {}, userSession = null) => 
 };
 
 const getReturnableWithdrawSummary = async (departmentId, tx = null) => {
-    const deptId = Number(departmentId);
-    if (!Number.isInteger(deptId) || deptId <= 0) {
+    if (!departmentId) {
         throw createHttpError(400, 'department_id is required');
     }
 
-    const units = await reusableRepo.selectInUseUnitsByDepartment(deptId, tx || undefined);
+    const units = await reusableRepo.selectInUseUnitsByDepartment(Number(departmentId), tx || undefined);
 
     const grouped = new Map();
     for (const unit of units) {
@@ -365,14 +386,15 @@ const getReturnableWithdrawSummary = async (departmentId, tx = null) => {
     }
 
     return {
-        department_id: deptId,
+        department_id: Number(departmentId),
         items: Array.from(grouped.values()).sort((a, b) => (a.item_name || '').localeCompare(b.item_name || '')),
     };
 };
 
 const createReturnRequest = async (payload = {}, userSession = null) => {
-    const departmentId = Number(payload.department_id);
-    if (!Number.isInteger(departmentId) || departmentId <= 0) {
+    // แก้ไข: รับเป็น department_id
+    const departmentId = payload.department_id ? Number(payload.department_id) : null;
+    if (!departmentId) {
         throw createHttpError(400, 'department_id is required');
     }
 
@@ -381,15 +403,16 @@ const createReturnRequest = async (payload = {}, userSession = null) => {
         throw createHttpError(400, 'items must be a non-empty array');
     }
 
-    const requestedBy = userSession?.user_id || null;
+    const requestedBy = userSession?.sub || null;
 
     return reusableRepo.withTransaction(async (tx) => {
         const docNo = await generateReturnRequestDocNo(tx);
         const availableSummary = await getReturnableWithdrawSummary(departmentId, tx);
         const availableMap = new Map(availableSummary.items.map((item) => [item.item_id, item.in_use_qty]));
+        
         const pendingRows = await reusableRepo.sumPendingReturnRequestQtyByDepartment(
             {
-                departmentId,
+                departmentId: departmentId,
                 statuses: [RETURN_REQUEST_STATUS.REQUESTED, RETURN_REQUEST_STATUS.PROCESSING],
             },
             tx
@@ -450,7 +473,7 @@ const createReturnRequest = async (payload = {}, userSession = null) => {
         const header = await reusableRepo.createReturnRequestHeader(
             {
                 doc_no: docNo,
-                department_id: departmentId,
+                department_id: departmentId, // แก้ไข: FK department_id
                 preferred_pickup_at: payload.preferred_pickup_at ? new Date(payload.preferred_pickup_at) : null,
                 contact_name: payload.contact_name || null,
                 contact_phone: payload.contact_phone || null,
@@ -476,18 +499,38 @@ const createReturnRequest = async (payload = {}, userSession = null) => {
     });
 };
 
-const getReturnRequests = async (query = {}) => {
-    const [items, total] = await reusableRepo.selectReturnRequests(query);
-    const totalPages = Math.max(1, Math.ceil(total / query.limit));
+/**
+ * List return requests with role-based access control.
+ * Admin: all requests.
+ * Non-admin: requests from their departments (or created by them).
+ */
+const getReturnRequests = async (query = {}, userSession = null) => {
+    const resolvedQuery = { ...query };
+
+    if (!isAdmin(userSession)) {
+        const deptIds = getUserDepartmentIds(userSession);
+        if (!resolvedQuery.department_id && deptIds.length > 0) {
+            resolvedQuery.department_ids = deptIds;
+        }
+        // Also allow users to see their own requests even outside their dept list
+        if (!resolvedQuery.requested_by) {
+            resolvedQuery.requested_by = userSession?.sub || null;
+        }
+    }
+
+    const [items, total] = await reusableRepo.selectReturnRequests(resolvedQuery);
+    const limit = resolvedQuery.limit || 10;
+    const page  = resolvedQuery.page  || 1;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
 
     return {
         items: items.map(DTO.mapReturnRequestResponse),
         total,
-        page: query.page,
-        limit: query.limit,
+        page,
+        limit,
         totalPages,
-        nextPage: query.page < totalPages ? query.page + 1 : null,
-        prevPage: query.page > 1 ? query.page - 1 : null,
+        nextPage: page < totalPages ? page + 1 : null,
+        prevPage: page > 1 ? page - 1 : null,
     };
 };
 
@@ -502,7 +545,7 @@ const getReturnRequestById = async (id) => {
 };
 
 const processReturnRequest = async (id, payload = {}, userSession = null) => {
-    const processedBy = userSession?.user_id || null;
+    const processedBy = userSession?.sub || null;
     const itemResults = Array.isArray(payload?.items) ? payload.items : [];
     const unitResults = Array.isArray(payload?.units) ? payload.units : [];
 
@@ -545,10 +588,6 @@ const processReturnRequest = async (id, payload = {}, userSession = null) => {
                 )
             );
 
-            if (uniqueUnitIds.length !== unitResults.length) {
-                throw createHttpError(400, 'units contains duplicate or invalid unit_id');
-            }
-
             const candidateUnits = await reusableRepo.selectInUseWithdrawUnitsByIds(
                 {
                     departmentId: request.department_id,
@@ -564,33 +603,23 @@ const processReturnRequest = async (id, payload = {}, userSession = null) => {
             for (let idx = 0; idx < unitResults.length; idx += 1) {
                 const row = unitResults[idx] || {};
                 const unitId = (row.unit_id || '').toString().trim();
-                if (!unitId) {
-                    throw createHttpError(400, `units[${idx}].unit_id is required`);
-                }
-
                 const unit = withdrawUnitById.get(unitId);
+                
                 if (!unit) {
-                    throw createHttpError(400, `units[${idx}] unit not found in department withdraw in-use stock`);
+                    throw createHttpError(400, `unit_id ${unitId} not found in department withdraw stock`);
                 }
 
                 const requestedItemId = requestedCodeToItemId.get(unit.unit_code);
-                if (!requestedItemId) {
-                    throw createHttpError(400, `units[${idx}] (${unit.unit_code}) does not belong to this return request`);
-                }
-                if (requestedItemId !== unit.item_id) {
-                    throw createHttpError(400, `units[${idx}] item mismatch for requested unit ${unit.unit_code}`);
-                }
-
                 const nextCount = Number(selectedQtyByItem.get(unit.item_id) || 0) + 1;
                 const requestedQty = Number(requestedQtyByItem.get(unit.item_id) || 0);
+                
                 if (nextCount > requestedQty) {
-                    throw createHttpError(400, `units[${idx}] exceeds requested_qty for item ${unit.item_id}`);
+                    throw createHttpError(400, `Exceeds requested_qty for item ${unit.item_id}`);
                 }
                 selectedQtyByItem.set(unit.item_id, nextCount);
             }
 
-            for (let idx = 0; idx < unitResults.length; idx += 1) {
-                const row = unitResults[idx] || {};
+            for (const row of unitResults) {
                 const unitId = (row.unit_id || '').toString().trim();
                 const unit = withdrawUnitById.get(unitId);
                 const nextState = getReusableReturnState(row.condition || 'GOOD');
@@ -613,34 +642,18 @@ const processReturnRequest = async (id, payload = {}, userSession = null) => {
                         from_department_id: request.department_id || null,
                         to_department_id: null,
                         ref_doc_no: request.doc_no,
-                        note: `RETURN_REQUEST:${request.doc_no} | ${unit.unit_code} | ${nextState.condition}${row.note ? ` | ${row.note}` : ''}`,
+                        note: `RETURN_REQUEST:${request.doc_no} | ${unit.unit_code} | ${nextState.condition}`,
                         performed_by: processedBy,
                     },
                     tx
                 );
             }
         } else {
-            for (let idx = 0; idx < itemResults.length; idx += 1) {
-                const result = itemResults[idx] || {};
+            for (const result of itemResults) {
                 const itemId = (result.item_id || '').toString().trim();
                 const returnQty = Number(result.return_qty);
 
-                if (!itemId) {
-                    throw createHttpError(400, `items[${idx}].item_id is required`);
-                }
-                if (!Number.isInteger(returnQty) || returnQty <= 0) {
-                    throw createHttpError(400, `items[${idx}].return_qty must be a positive integer`);
-                }
-
-                const requestItem = requestItemMap.get(itemId);
-                if (!requestItem) {
-                    throw createHttpError(400, `items[${idx}] does not belong to this return request`);
-                }
-                if (returnQty > Number(requestItem.requested_qty || 0)) {
-                    throw createHttpError(400, `items[${idx}] return_qty exceeds requested_qty (${requestItem.requested_qty})`);
-                }
-
-                const candidateUnits = await reusableRepo.selectInUseWithdrawUnitsByDeptAndItem(
+                const withdrawUnits = await reusableRepo.selectInUseWithdrawUnitsByDeptAndItem(
                     {
                         departmentId: request.department_id,
                         itemId,
@@ -649,14 +662,9 @@ const processReturnRequest = async (id, payload = {}, userSession = null) => {
                     tx
                 );
 
-                const withdrawUnits = (candidateUnits || []).filter((unit) => inferUsageContextFromLog(unit.movement_logs?.[0] || null) === 'WITHDRAW');
-                if (withdrawUnits.length < returnQty) {
-                    throw createHttpError(400, `items[${idx}] in-use withdraw units are not enough (need ${returnQty}, found ${withdrawUnits.length})`);
-                }
-
                 const nextState = getReusableReturnState(result.condition || 'GOOD');
 
-                for (const unit of withdrawUnits.slice(0, returnQty)) {
+                for (const unit of withdrawUnits) {
                     await reusableRepo.updateReusableUnit(
                         unit.id,
                         {
@@ -675,7 +683,6 @@ const processReturnRequest = async (id, payload = {}, userSession = null) => {
                             from_department_id: request.department_id || null,
                             to_department_id: null,
                             ref_doc_no: request.doc_no,
-                            note: `RETURN_REQUEST:${request.doc_no}${result.note ? ` | ${result.note}` : ''}`,
                             performed_by: processedBy,
                         },
                         tx
@@ -688,7 +695,6 @@ const processReturnRequest = async (id, payload = {}, userSession = null) => {
             id,
             {
                 status: payload.complete === false ? RETURN_REQUEST_STATUS.PROCESSING : RETURN_REQUEST_STATUS.COMPLETED,
-                ...(Object.prototype.hasOwnProperty.call(payload, 'note') && { note: payload.note || request.note || null }),
             },
             tx
         );
@@ -697,37 +703,15 @@ const processReturnRequest = async (id, payload = {}, userSession = null) => {
     });
 };
 
-const deleteReturnRequest = async (id) => {
-    return reusableRepo.withTransaction(async (tx) => {
-        const request = await reusableRepo.selectReturnRequestById(id, tx);
-        if (!request || request.deleted_at) {
-            throw createHttpError(404, 'return request not found');
-        }
-
-        const currentStatus = (request.status || '').toString().trim().toUpperCase();
-        if (currentStatus === RETURN_REQUEST_STATUS.COMPLETED) {
-            throw createHttpError(400, 'cannot delete completed return request');
-        }
-
-        const deleted = await reusableRepo.updateReturnRequestById(
-            id,
-            {
-                deleted_at: new Date(),
-            },
-            tx
-        );
-
-        return DTO.mapReturnRequestResponse(deleted);
-    });
-};
-
 const resolveBarcode = async ({ value, departmentId = null } = {}) => {
     const key = (value || '').toString().trim();
-    if (!key) {
-        throw createHttpError(400, 'value is required');
-    }
+    if (!key) throw createHttpError(400, 'value is required');
 
-    const unit = await reusableRepo.selectUnitByBarcodeValue({ value: key, departmentId });
+    const unit = await reusableRepo.selectUnitByBarcodeValue({ 
+        value: key, 
+        departmentId: departmentId ? Number(departmentId) : null 
+    });
+    
     if (unit) {
         return {
             type: 'UNIT',
@@ -745,7 +729,8 @@ const resolveBarcode = async ({ value, departmentId = null } = {}) => {
             },
         };
     }
-
+    
+    // ... ส่วนของ LOT และ ITEM ทำงานแบบเดิมได้เลย เพราะไม่ได้อิงแผนกโดยตรง
     const lot = await reusableRepo.selectLotByBarcodeValue({ value: key });
     if (lot) {
         return {
@@ -795,6 +780,5 @@ module.exports = {
     getReturnRequests,
     getReturnRequestById,
     processReturnRequest,
-    deleteReturnRequest,
     resolveBarcode,
 };

@@ -4,6 +4,7 @@ const prisma = new PrismaClient();
 
 const unitInclude = {
     items: { select: { id: true, code: true, name: true } },
+    // Join ข้อมูลแผนก
     departments: { select: { id: true, name: true } },
     movement_logs: {
         where: {
@@ -70,20 +71,45 @@ const createReusableUnits = async (data, tx = prisma) => {
     return tx.reusable_item_units.createMany({ data });
 };
 
-const selectReusableUnits = async ({ page = 1, limit = 10, keyword = '', item_id = '', department_id = null, status = '' } = {}) => {
+/**
+ * @param {object} opts
+ * @param {number}      opts.page
+ * @param {number}      opts.limit
+ * @param {string}      opts.keyword
+ * @param {string}      opts.item_id
+ * @param {number|null} opts.department_id   — exact dept filter
+ * @param {number[]}    opts.department_ids  — non-admin IN filter
+ * @param {string}      opts.status
+ */
+const selectReusableUnits = async ({
+    page = 1,
+    limit = 10,
+    keyword = '',
+    item_id = '',
+    department_id = null,
+    department_ids = [],
+    status = '',
+} = {}) => {
     const where = {
         deleted_at: null,
     };
 
     if (item_id) where.item_id = item_id;
-    if (Number.isInteger(department_id) && department_id > 0) where.department_id = department_id;
-    if (status) where.status = status;
+    if (status)  where.status  = status;
+
+    // Department filtering: exact takes precedence over list
+    if (department_id) {
+        where.department_id = Number(department_id);
+    } else if (department_ids.length > 0) {
+        where.department_id = { in: department_ids };
+    }
 
     if (keyword) {
         where.OR = [
-            { unit_code: { contains: keyword, mode: 'insensitive' } },
-            { serial_no: { contains: keyword, mode: 'insensitive' } },
-            { items: { is: { name: { contains: keyword, mode: 'insensitive' } } } },
+            { unit_code:   { contains: keyword, mode: 'insensitive' } },
+            { serial_no:   { contains: keyword, mode: 'insensitive' } },
+            { items:       { name: { contains: keyword, mode: 'insensitive' } } },
+            { departments: { name: { contains: keyword, mode: 'insensitive' } } },
         ];
     }
 
@@ -92,8 +118,8 @@ const selectReusableUnits = async ({ page = 1, limit = 10, keyword = '', item_id
             where,
             include: unitInclude,
             orderBy: [{ created_at: 'desc' }, { unit_code: 'asc' }],
-            skip: (page - 1) * limit,
-            take: limit,
+            skip: (page - 1) * Number(limit),
+            take: Number(limit),
         }),
         prisma.reusable_item_units.count({ where }),
     ]);
@@ -107,9 +133,12 @@ const selectReusableUnitById = async (id, tx = prisma) => {
 };
 
 const updateReusableUnit = async (id, data, tx = prisma) => {
+    const updateData = { ...data };
+    if (updateData.department_id) updateData.department_id = Number(updateData.department_id);
+
     return tx.reusable_item_units.update({
         where: { id },
-        data,
+        data: updateData,
         include: unitInclude,
     });
 };
@@ -121,6 +150,7 @@ const createReusableUnitLog = async (data, tx = prisma) => {
 const selectInUseUnitsByDepartment = async (departmentId, tx = prisma) => {
     return tx.reusable_item_units.findMany({
         where: {
+            // ลบ String() ออก
             department_id: Number(departmentId),
             status: 'IN_USE',
             deleted_at: null,
@@ -165,7 +195,10 @@ const countReturnRequestsByYear = async (year, tx = prisma) => {
 
 const createReturnRequestHeader = async (data, tx = prisma) => {
     return tx.reusable_return_requests.create({
-        data,
+        data: {
+            ...data,
+            department_id: Number(data.department_id)
+        },
     });
 };
 
@@ -180,34 +213,59 @@ const selectReturnRequestById = async (id, tx = prisma) => {
     });
 };
 
-const selectReturnRequests = async ({ page = 1, limit = 10, department_id = null, status = '', keyword = '' } = {}) => {
-    const where = {
-        deleted_at: null,
-    };
+/**
+ * @param {object} opts
+ * @param {number}      opts.page
+ * @param {number}      opts.limit
+ * @param {number|null} opts.department_id   — exact dept filter
+ * @param {number[]}    opts.department_ids  — non-admin IN filter
+ * @param {string|null} opts.requested_by    — filter to own requests (non-admin fallback)
+ * @param {string}      opts.status
+ * @param {string}      opts.keyword
+ */
+const selectReturnRequests = async ({
+    page = 1,
+    limit = 10,
+    department_id = null,
+    department_ids = [],
+    requested_by = null,
+    status = '',
+    keyword = '',
+} = {}) => {
+    const andConditions = [{ deleted_at: null }];
 
-    if (Number.isInteger(department_id) && department_id > 0) {
-        where.department_id = department_id;
-    }
+    if (status) andConditions.push({ status });
 
-    if (status) {
-        where.status = status;
+    // Department access-control filter
+    if (department_id) {
+        andConditions.push({ department_id: Number(department_id) });
+    } else if (department_ids.length > 0 || requested_by) {
+        // Non-admin: show dept records OR own records
+        const accessOr = [];
+        if (department_ids.length > 0) accessOr.push({ department_id: { in: department_ids } });
+        if (requested_by)             accessOr.push({ requested_by });
+        andConditions.push({ OR: accessOr });
     }
 
     if (keyword) {
-        where.OR = [
-            { doc_no: { contains: keyword, mode: 'insensitive' } },
-            { contact_name: { contains: keyword, mode: 'insensitive' } },
-            { departments: { is: { name: { contains: keyword, mode: 'insensitive' } } } },
-        ];
+        andConditions.push({
+            OR: [
+                { doc_no:       { contains: keyword, mode: 'insensitive' } },
+                { contact_name: { contains: keyword, mode: 'insensitive' } },
+                { departments:  { name: { contains: keyword, mode: 'insensitive' } } },
+            ],
+        });
     }
+
+    const where = { AND: andConditions };
 
     return prisma.$transaction([
         prisma.reusable_return_requests.findMany({
             where,
             include: returnRequestInclude,
             orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
-            skip: (page - 1) * limit,
-            take: limit,
+            skip: (page - 1) * Number(limit),
+            take: Number(limit),
         }),
         prisma.reusable_return_requests.count({ where }),
     ]);
@@ -265,7 +323,7 @@ const selectUnitsByCodes = async ({ departmentId = null, unitCodes = [] } = {}, 
         where: {
             unit_code: { in: normalizedCodes },
             deleted_at: null,
-            ...(Number.isInteger(Number(departmentId)) && Number(departmentId) > 0 ? { department_id: Number(departmentId) } : {}),
+            ...(departmentId ? { department_id: Number(departmentId) } : {}),
         },
         select: {
             id: true,
@@ -299,7 +357,7 @@ const selectUnitByBarcodeValue = async ({ value = '', departmentId = null } = {}
     return tx.reusable_item_units.findFirst({
         where: {
             deleted_at: null,
-            ...(Number.isInteger(Number(departmentId)) && Number(departmentId) > 0 ? { department_id: Number(departmentId) } : {}),
+            ...(departmentId ? { department_id: Number(departmentId) } : {}),
             OR: [
                 { unit_code: { equals: key, mode: 'insensitive' } },
                 { serial_no: { equals: key, mode: 'insensitive' } },

@@ -2,6 +2,8 @@ const requisitionService = require('../services/requisition.Service');
 const notificationService = require('../services/notification.service');
 const util = require('../utils/response');
 const { getIO, buildUserRoom } = require('../utils/socket');
+const { isAdmin, getUserDepartmentIds } = require('../utils/userAccess');
+
 /**
  * @typedef {Object} RequisitionItemInput
  * @property {string} item_id
@@ -12,7 +14,7 @@ const { getIO, buildUserRoom } = require('../utils/socket');
 /**
  * @typedef {Object} CreateRequisitionBody
  * @property {string} type - 'WITHDRAW' | 'BORROW'
- * @property {string} department_id
+ * @property {number} department_id - เปลี่ยนจาก string department เป็น number id
  * @property {string|null=} note
  * @property {string|null=} due_date
  * @property {Object|null=} borrower - { fullname, phone, address, ... }
@@ -49,7 +51,7 @@ const emitNotificationRefresh = (recipientIds = []) => {
 
         ids.forEach((uid) => io.to(buildUserRoom(uid)).emit('REFRESH_DATA', 'NOTIFICATIONS'));
     } catch (e) {
-        // Ignore socket refresh failures for mutation success path.
+        // Ignore socket refresh failures
     }
 };
 
@@ -65,7 +67,7 @@ const safeCreateNotification = async ({ actorId, recipientIds = [], payload }) =
         });
         emitNotificationRefresh(ids);
     } catch (e) {
-        // Do not fail core transaction if notification creation fails.
+        // Ignore notification creation failures
     }
 };
 
@@ -75,7 +77,10 @@ const validateCreateRequisition = (data) => {
     if (!data.type || ![REQ_TYPES.WITHDRAW, REQ_TYPES.BORROW].includes(data.type.toUpperCase())) {
         return 'type is required and must be WITHDRAW or BORROW';
     }
-    if (!data.department_id) return 'department_id is required';
+    
+    // แก้ไข: ตรวจสอบเป็น department_id (Number)
+    const deptId = Number(data.department_id);
+    if (!deptId || !Number.isInteger(deptId)) return 'department_id is required and must be an integer';
 
     if (!Array.isArray(data.items) || data.items.length === 0) {
         return 'items must be a non-empty array';
@@ -101,16 +106,30 @@ const validateCreateRequisition = (data) => {
 const createRequisition = async (req, res) => {
     try {
         const data = { ...req.body };
+
+        data.requester_id = req.user?.sub ?? null;
+
+        // Access control: non-admin users may only create requisitions for their own departments.
+        if (!isAdmin(req.user)) {
+            const userDeptIds = getUserDepartmentIds(req.user);
+            if (userDeptIds.length > 0 && !userDeptIds.includes(Number(data.department_id))) {
+                return util.sendResponse(res, 403, 'ไม่มีสิทธิ์ดำเนินการในนามแผนกนี้');
+            }
+        }
+
         const validationMessage = validateCreateRequisition(data);
         if (validationMessage) {
             return util.sendResponse(res, 400, validationMessage);
         }
 
+        // แปลงให้เป็น Number ก่อนส่งเข้า Service
+        data.department_id = Number(data.department_id);
+
         const created = await requisitionService.createRequisition(data, req.user || null);
 
         const warehouseRecipients = await getWarehouseRecipientIds();
         await safeCreateNotification({
-            actorId: req.user?.user_id || req.user?.id || null,
+            actorId: req.user?.sub || null,
             recipientIds: warehouseRecipients,
             payload: {
                 type: 'REQUISITION_CREATED',
@@ -128,7 +147,6 @@ const createRequisition = async (req, res) => {
             },
         });
 
-        // แจ้งเตือน Frontend ให้ดึงข้อมูลใหม่
         req.io.emit('REFRESH_DATA', 'REQUISITIONS');
 
         return util.sendResponse(res, 201, 'create requisition success', created);
@@ -139,9 +157,7 @@ const createRequisition = async (req, res) => {
 
 const getRequisitions = async (req, res) => {
     try {
-        const query = req.query; 
-        const result = await requisitionService.getAllRequisitions(query);
-
+        const result = await requisitionService.getAllRequisitions(req.query, req.user || null);
         return util.sendListResponse(res, 200, 'list requisitions success', result);
     } catch (error) {
         return util.sendResponse(res, 500, error.message || 'fetch requisitions failed');
@@ -169,7 +185,7 @@ const getRequisitionById = async (req, res) => {
 const approveRequisition = async (req, res) => {
     try {
         const id = Number(req.params.id);
-        const itemsToIssue = req.body?.items; // Expecting { "reqItemId": qty }
+        const itemsToIssue = req.body?.items; 
 
         if (!itemsToIssue || typeof itemsToIssue !== 'object') {
             return util.sendResponse(res, 400, 'items to issue are required');
@@ -184,7 +200,7 @@ const approveRequisition = async (req, res) => {
                 : `คำขอยืมอนุมัติแล้ว: ${result?.doc_no || '-'}`;
 
             await safeCreateNotification({
-                actorId: req.user?.user_id || req.user?.id || null,
+                actorId: req.user?.sub || null,
                 recipientIds: [requesterId],
                 payload: {
                     type: 'REQUISITION_APPROVED',
@@ -198,7 +214,6 @@ const approveRequisition = async (req, res) => {
             });
         }
 
-        // สำคัญ: เมื่ออนุมัติ สต็อกเปลี่ยน ต้องสั่ง Refresh ทั้งระบบ
         req.io.emit('REFRESH_DATA', 'REQUISITIONS');
         req.io.emit('REFRESH_DATA', 'LOTS');
         req.io.emit('REFRESH_DATA', 'ITEMS');
@@ -225,7 +240,7 @@ const completeDelivery = async (req, res) => {
         const requesterId = result?.requester_id ? String(result.requester_id) : null;
         if (requesterId) {
             await safeCreateNotification({
-                actorId: req.user?.user_id || req.user?.id || null,
+                actorId: req.user?.sub || null,
                 recipientIds: [requesterId],
                 payload: {
                     type: 'REQUISITION_DELIVERED',
@@ -260,7 +275,7 @@ const rejectRequisition = async (req, res) => {
         const requesterId = result?.requester_id ? String(result.requester_id) : null;
         if (requesterId) {
             await safeCreateNotification({
-                actorId: req.user?.user_id || req.user?.id || null,
+                actorId: req.user?.sub || null,
                 recipientIds: [requesterId],
                 payload: {
                     type: 'REQUISITION_REJECTED',
@@ -296,7 +311,7 @@ const cancelRequisition = async (req, res) => {
 
         const warehouseRecipients = await getWarehouseRecipientIds();
         await safeCreateNotification({
-            actorId: req.user?.user_id || req.user?.id || null,
+            actorId: req.user?.sub || null,
             recipientIds: warehouseRecipients,
             payload: {
                 type: 'REQUISITION_CANCELLED',
@@ -362,7 +377,7 @@ const processReturn = async (req, res) => {
         const requesterId = result?.requester_id ? String(result.requester_id) : null;
         if (requesterId) {
             await safeCreateNotification({
-                actorId: req.user?.user_id || req.user?.id || null,
+                actorId: req.user?.sub || null,
                 recipientIds: [requesterId],
                 payload: {
                     type: 'BORROW_RETURN_UPDATED',

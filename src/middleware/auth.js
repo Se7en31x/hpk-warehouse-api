@@ -1,36 +1,60 @@
 const jwt = require('jsonwebtoken');
+const jwksClient = require('jwks-rsa');
+require('dotenv').config();
+// ตั้งค่าดึงกุญแจจาก Supabase (ใช้ URL ที่คุณเคยส่งมา)
+const client = jwksClient({
+  jwksUri: `https://${process.env.SUPABASE_PROJECT_ID}.supabase.co/auth/v1/.well-known/jwks.json`,
+  cache: true,        // เก็บกุญแจไว้ใน Cache จะได้ไม่ต้องวิ่งไปถามบ่อยๆ
+  rateLimit: true,
+  jwksRequestsPerMinute: 5
+});
 
-// 1. Middleware สำหรับเช็ค Token อย่างเดียว
-const verifyToken = (req, res, next) => {
-    const authHeader = req.headers.authorization;
-    // console.log("🔑 DB Secret Key:", process.env.JWT_SECRET);
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ message: 'Unauthorized' });
+// ฟังก์ชันสำหรับหา Signing Key ที่ตรงกับ Token ที่ส่งมา
+function getKey(header, callback) {
+  client.getSigningKey(header.kid, (err, key) => {
+    if (err) {
+      callback(err, null);
+    } else {
+      const signingKey = key.getPublicKey();
+      callback(null, signingKey);
     }
-    const token = authHeader.split(' ')[1];
-    try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET.trim());
-        req.user = decoded;
-        next(); // ผ่านไปเช็ค Role ต่อ
-    } catch (err) {
-        console.log("❌ JWT Error:", err.message);
-        return res.status(401).json({ message: 'Token invalid' });
-    }
-};
+  });
+}
 
-// 2. ฟังก์ชันช่วยเช็ค Role (Helper)
-const checkRole = (groupEnv) => {
-    return (req, res, next) => {
-        const allowed = process.env[groupEnv].split(',');
-        if (allowed.includes(req.user.role)) {
-            return next();
-        }
-        res.status(403).json({ message: `Forbidden: ${groupEnv} only` });
+const mw = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ success: false, message: 'Unauthorized: no token provided' });
+  }
+
+  const token = authHeader.split(' ')[1];
+
+  // ✅ ใช้ getKey แทนการใส่กุญแจตรงๆ
+  jwt.verify(token, getKey, { algorithms: ['ES256'] }, (err, decoded) => {
+    if (err) {
+      console.error('❌ [Backend] JWT Verification Error:', err.message);
+      return res.status(401).json({ success: false, message: `Unauthorized: ${err.message}` });
+    }
+
+    const meta = decoded.app_metadata || {};
+
+    req.user = {
+      sub: decoded.sub,
+      email: decoded.email || null,
+      // role: { id, name } — used for admin/user branching
+      role: meta.role && typeof meta.role === 'object'
+              ? { id: Number(meta.role.id) || null, name: String(meta.role.name || 'guest') }
+              : { id: null, name: 'guest' },
+      // departments: [{ id, name }] — user's allowed department IDs
+      departments: Array.isArray(meta.departments)
+                    ? meta.departments.map(d => ({ id: Number(d.id), name: String(d.name || '') }))
+                    : [],
+      // systems: [{ id, name }] — kept for backwards compatibility
+      systems: Array.isArray(meta.systems) ? meta.systems : [],
     };
+
+    next();
+  });
 };
 
-// 3. Export Middleware ที่รวมทั้งเช็ค Token และ Role
-exports.authWarehouse = [verifyToken, checkRole('ROLE_WAREHOUSE_GROUP')];
-exports.authUser = [verifyToken, checkRole('ROLE_HEALTHCARE_GROUP')];
-exports.authProc = [verifyToken, checkRole('ROLE_PROCUREMENT_GROUP')];
-exports.auth = [verifyToken, checkRole('ROLE_ALL_GROUPS')];
+module.exports = { mw };

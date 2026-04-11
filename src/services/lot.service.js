@@ -94,8 +94,8 @@ const adjustLotStock = async (lotId, payload, user = {}) => {
                 quantity: movementQty,
                 type: movementType,
                 note: fullNote,
-                created_by: user.user_fullname || null,
-                created_by_id: user.user_id || null,
+                created_by: user.email || null,
+                created_by_id: user.sub || null,
             }, tx);
         }
 
@@ -134,8 +134,8 @@ const deleteLot = async (lotId, user = {}) => {
                 quantity: currentQty,
                 type: STOCK_MOVEMENT_TYPES.ADJUST_OUT,
                 note: 'ยกเลิก Lot',
-                created_by: user.user_fullname || null,
-                created_by_id: user.user_id || null,
+                created_by: user.email || null,
+                created_by_id: user.sub || null,
             }, tx);
         }
 
@@ -173,8 +173,8 @@ const toggleLotStatus = async (lotId, user = {}) => {
             quantity: 0,
             type: STOCK_MOVEMENT_TYPES.UPDATE,
             note: `เปลี่ยนสถานะเป็น ${nextStatus}`,
-            created_by: user.user_fullname || null,
-            created_by_id: user.user_id || null,
+            created_by: user.email || null,
+            created_by_id: user.sub || null,
         }, tx);
 
         const updatedLot = await lotRepo.selectLotById(lotId, tx) || existingLot;

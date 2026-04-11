@@ -730,7 +730,6 @@ const resolveBarcode = async ({ value, departmentId = null } = {}) => {
         };
     }
     
-    // ... ส่วนของ LOT และ ITEM ทำงานแบบเดิมได้เลย เพราะไม่ได้อิงแผนกโดยตรง
     const lot = await reusableRepo.selectLotByBarcodeValue({ value: key });
     if (lot) {
         return {

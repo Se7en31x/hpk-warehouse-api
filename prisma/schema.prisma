@@ -1,0 +1,1273 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema", "views"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+  schemas   = ["auth", "inventory", "public"]
+}
+
+model inventory_snapshot {
+  id           Int         @id @default(autoincrement())
+  date         DateTime    @db.Date
+  item_id      String?     @db.Uuid
+  warehouse_id String?     @db.Uuid
+  quantity     Int
+  avg_cost     Decimal?    @db.Decimal(10, 2)
+  items        items?      @relation(fields: [item_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "inventory_snapshot_item_fk")
+  warehouse    warehouses? @relation(fields: [warehouse_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "inventory_snapshot_warehouse_fk")
+
+  @@unique([date, item_id, warehouse_id], map: "inventory_snapshot_unique_idx")
+  @@index([date])
+  @@schema("inventory")
+}
+
+model item_allocation {
+  id               Int               @id @default(autoincrement())
+  req_item_id      Int?
+  lot_id           String?           @db.Uuid
+  qty              Int
+  status           String?           @default("PENDING") @db.VarChar(20)
+  created_at       DateTime?         @default(now()) @db.Timestamptz(6)
+  item_lot         item_lots?        @relation(fields: [lot_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "item_allocation_lot_fk")
+  requisition_item requisition_item? @relation(fields: [req_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "item_allocation_req_item_fk")
+
+  @@schema("inventory")
+}
+
+model items {
+  id                            String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                          String
+  code                          String                          @unique(map: "items_code_unique")
+  category_id                   String?                         @db.Uuid
+  unit_id                       String?                         @db.Uuid
+  min_stock                     Int?                            @default(0)
+  current_stock                 Int?                            @default(0)
+  image_url                     String?
+  status                        String?                         @default("ACTIVE") @db.VarChar(20)
+  sell_price                    Decimal?                        @default(0) @db.Decimal(10, 2)
+  created_at                    DateTime?                       @default(now()) @db.Timestamptz(6)
+  updated_at                    DateTime?                       @default(now()) @updatedAt @db.Timestamptz(6)
+  deleted_at                    DateTime?                       @db.Timestamptz(6)
+  warehouse_id                  String?                         @db.Uuid
+  description                   String?
+  image_public_id               String?                         @db.VarChar(100)
+  type                          String?                         @default("CONSUMABLE") @db.VarChar(20)
+  allowed_req                   Boolean?                        @default(true)
+  allowed_borrow                Boolean?                        @default(false)
+  inventory_snapshot            inventory_snapshot[]
+  item_lots                     item_lots[]
+  categories                    categories?                     @relation(fields: [category_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "items_category_fk")
+  unit                          units?                          @relation(fields: [unit_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "items_unit_fk")
+  warehouses                    warehouses?                     @relation(fields: [warehouse_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "items_warehouse_fk")
+  medical_assets                medical_assets[]
+  receive_item                  receive_item[]
+  requisition_item              requisition_item[]
+  reusable_item_units           reusable_item_units[]
+  reusable_return_request_items reusable_return_request_items[]
+  stocks_movement               stocks_movement[]
+
+  @@schema("inventory")
+}
+
+model logs_transaction {
+  id            Int       @id @default(autoincrement())
+  action        String    @db.VarChar(50)
+  module        String    @db.VarChar(50)
+  code          String?   @db.VarChar(50)
+  status        String?   @db.VarChar(20)
+  description   String?
+  created_by    String?   @db.VarChar(100)
+  created_at    DateTime? @default(now()) @db.Timestamptz(6)
+  created_by_id String?   @db.Uuid
+
+  @@index([action])
+  @@index([code])
+  @@index([created_at])
+  @@schema("inventory")
+}
+
+model requisition_header {
+  id                                                 Int                @id @default(autoincrement())
+  doc_no                                             String             @unique @db.VarChar(50)
+  type                                               String             @db.VarChar(50)
+  status                                             String?            @default("DRAFT") @db.VarChar(50)
+  requester_id                                       String             @db.Uuid
+  approver_id                                        String?            @db.Uuid
+  request_date                                       DateTime?          @default(now()) @db.Timestamptz(6)
+  due_date                                           DateTime?          @db.Timestamptz(6)
+  return_date                                        DateTime?          @db.Timestamptz(6)
+  note                                               String?
+  created_at                                         DateTime?          @default(now()) @db.Timestamptz(6)
+  updated_at                                         DateTime?          @default(now()) @updatedAt @db.Timestamptz(6)
+  borrower_id                                        String?            @db.Uuid
+  department_id                                      Int?
+  departments                                        departments?       @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_department")
+  profiles_requisition_header_approver_idToprofiles  profiles?          @relation("requisition_header_approver_idToprofiles", fields: [approver_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_req_header_approver")
+  profiles_requisition_header_requester_idToprofiles profiles           @relation("requisition_header_requester_idToprofiles", fields: [requester_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_req_header_requester")
+  borrower_details                                   borrower_details?  @relation(fields: [borrower_id], references: [id], onUpdate: NoAction, map: "fk_requisition_borrower")
+  requisition_item                                   requisition_item[]
+
+  @@index([doc_no], map: "idx_req_header_doc_no")
+  @@index([status], map: "idx_req_header_status")
+  @@schema("inventory")
+}
+
+model requisition_item {
+  id                 Int                @id @default(autoincrement())
+  header_id          Int
+  item_id            String?            @db.Uuid
+  req_qty            Int
+  approved_qty       Int?
+  issued_qty         Int?               @default(0)
+  returned_qty       Int?               @default(0)
+  note               String?
+  item_allocation    item_allocation[]
+  requisition_header requisition_header @relation(fields: [header_id], references: [id], onDelete: Cascade, map: "requisition_item_header_fk")
+  items              items?             @relation(fields: [item_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "requisition_item_item_fk")
+  return_log         return_log[]
+
+  @@index([header_id], map: "idx_req_item_header")
+  @@schema("inventory")
+}
+
+model categories {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String    @db.VarChar(255)
+  code_prefix String    @db.VarChar(10)
+  description String?
+  created_at  DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime? @default(now()) @updatedAt @db.Timestamptz(6)
+  deleted_at  DateTime? @db.Timestamptz(6)
+  item_type   String    @default("CONSUMABLE") @db.VarChar(20)
+  items       items[]
+
+  @@schema("inventory")
+}
+
+model item_lots {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  lot_code        String            @db.VarChar(100)
+  item_id         String?           @db.Uuid
+  warehouse_id    String?           @db.Uuid
+  quantity        Int?              @default(0)
+  status          String?           @default("ACTIVE") @db.VarChar(20)
+  expired_at      DateTime?         @db.Timestamptz(6)
+  note            String?           @db.VarChar(255)
+  created_at      DateTime?         @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime?         @default(now()) @updatedAt @db.Timestamptz(6)
+  deleted_at      DateTime?         @db.Timestamptz(6)
+  item_allocation item_allocation[]
+  items           items?            @relation(fields: [item_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "item_lot_item_fk")
+  warehouses      warehouses?       @relation(fields: [warehouse_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "item_lot_warehouse_fk")
+
+  @@unique([item_id, lot_code], map: "item_lot_unique_idx")
+  @@schema("inventory")
+}
+
+model stocks_movement {
+  id            Int       @id(map: "stock_movement_pkey") @default(autoincrement())
+  item_id       String?   @db.Uuid
+  lot_id        String?   @db.Uuid
+  quantity      Int?      @default(0)
+  type          String    @db.VarChar(50)
+  note          String?
+  created_by    String?
+  created_by_id String?   @db.Uuid
+  created_at    DateTime? @default(now()) @db.Timestamptz(6)
+  items         items?    @relation(fields: [item_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "stock_movement_item_fk")
+
+  @@schema("inventory")
+}
+
+model units {
+  id          String    @id(map: "unit_pkey") @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  created_at  DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime? @default(now()) @updatedAt @db.Timestamptz(6)
+  description String?
+  deleted_at  DateTime? @db.Timestamptz(6)
+  items       items[]
+
+  @@schema("inventory")
+}
+
+model warehouses {
+  id                 String               @id(map: "warehouse_pkey") @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name               String
+  location           String?
+  created_at         DateTime?            @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime?            @default(now()) @updatedAt @db.Timestamptz(6)
+  description        String?
+  deleted_at         DateTime?            @db.Timestamptz(6)
+  inventory_snapshot inventory_snapshot[]
+  item_lots          item_lots[]
+  items              items[]
+
+  @@schema("inventory")
+}
+
+model departments {
+  id                       Int                        @id
+  name                     String?                    @db.VarChar(255)
+  description              String?                    @db.VarChar(255)
+  created_at               DateTime?                  @db.Timestamptz(6)
+  updated_at               DateTime?                  @db.Timestamptz(6)
+  deleted_at               DateTime?                  @db.Timestamptz(6)
+  is_disable               Boolean?
+  code                     String?                    @db.VarChar
+  name_en                  String?                    @db.VarChar(255)
+  asset_units              asset_units[]
+  medical_assets           medical_assets[]
+  requisition_header       requisition_header[]
+  reusable_item_units      reusable_item_units[]
+  reusable_return_requests reusable_return_requests[]
+
+  @@schema("public")
+}
+
+model reusable_return_requests {
+  id                  Int                             @id @default(autoincrement())
+  doc_no              String                          @unique @db.VarChar(50)
+  department_id       Int
+  preferred_pickup_at DateTime?                       @db.Timestamptz(6)
+  contact_name        String?                         @db.VarChar(255)
+  contact_phone       String?                         @db.VarChar(50)
+  note                String?
+  status              String                          @default("REQUESTED") @db.VarChar(20)
+  requested_by        String?                         @db.Uuid
+  created_at          DateTime                        @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime                        @default(now()) @updatedAt @db.Timestamptz(6)
+  deleted_at          DateTime?                       @db.Timestamptz(6)
+  request_items       reusable_return_request_items[]
+  departments         departments                     @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reusable_return_request_department")
+
+  @@index([department_id], map: "idx_reusable_return_requests_department")
+  @@index([status], map: "idx_reusable_return_requests_status")
+  @@schema("inventory")
+}
+
+model reusable_return_request_items {
+  id            Int                      @id @default(autoincrement())
+  request_id    Int
+  item_id       String                   @db.Uuid
+  requested_qty Int
+  note          String?
+  created_at    DateTime                 @default(now()) @db.Timestamptz(6)
+  items         items                    @relation(fields: [item_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reusable_return_request_item_item")
+  request       reusable_return_requests @relation(fields: [request_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_reusable_return_request_item_request")
+
+  @@index([item_id], map: "idx_reusable_return_request_items_item")
+  @@index([request_id], map: "idx_reusable_return_request_items_request")
+  @@schema("inventory")
+}
+
+model supplier {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String
+  contact        String?
+  address        String?
+  phone          String?
+  tax_id         String?
+  active         Boolean?         @default(true)
+  created_at     DateTime?        @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime?        @default(now()) @db.Timestamptz(6)
+  deleted_at     DateTime?        @db.Timestamptz(6)
+  receive_header receive_header[]
+
+  @@schema("public")
+}
+
+model receive_header {
+  id                   Int              @id @default(autoincrement())
+  doc_no               String           @unique @db.VarChar(50)
+  type                 String           @db.VarChar(50)
+  status               String?          @default("PENDING") @db.VarChar(50)
+  supplier_id          String?          @db.Uuid
+  donor_name           String?          @db.VarChar(255)
+  receive_date         DateTime?        @default(now()) @db.Timestamptz(6)
+  note                 String?
+  created_by           String?          @db.Uuid
+  created_at           DateTime?        @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime?        @default(now()) @db.Timestamptz(6)
+  parent_id            Int?
+  receive_header       receive_header?  @relation("receive_headerToreceive_header", fields: [parent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  other_receive_header receive_header[] @relation("receive_headerToreceive_header")
+  supplier             supplier?        @relation(fields: [supplier_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "receive_header_supplier_fk")
+  users                profiles?        @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "receive_header_users_fk")
+  receive_item         receive_item[]
+
+  @@index([doc_no], map: "idx_receive_header_doc_no")
+  @@index([type], map: "idx_receive_header_type")
+  @@schema("inventory")
+}
+
+model receive_item {
+  id                  Int                   @id @default(autoincrement())
+  header_id           Int
+  item_id             String                @db.Uuid
+  lot_code            String?               @db.VarChar(100)
+  qty                 Int                   @default(0)
+  cost_price          Decimal?              @default(0) @db.Decimal(10, 2)
+  expired_at          DateTime?             @db.Timestamptz(6)
+  expected_qty        Int                   @default(0)
+  medical_assets      medical_assets[]
+  receive_header      receive_header        @relation(fields: [header_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "receive_item_header_fk")
+  items               items                 @relation(fields: [item_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "receive_item_item_fk")
+  reusable_item_units reusable_item_units[]
+
+  @@index([header_id], map: "idx_receive_item_header")
+  @@schema("inventory")
+}
+
+model lookup_mstatus {
+  mstatus_code String @id(map: "PK_a8d2ed3ebeea14eeb4377c29ef3") @db.VarChar(1)
+  mstatus      String @db.VarChar(100)
+
+  @@schema("public")
+}
+
+model lookup_nations {
+  nation_code String @id(map: "PK_aa8e225d54e36f787ea37fb1284") @db.VarChar(3)
+  nation      String @db.VarChar(100)
+
+  @@schema("public")
+}
+
+model lookup_occupations {
+  occup_code String @id(map: "PK_ca5c5d4461da50573a0bbbcb199") @db.VarChar(5)
+  name       String
+
+  @@schema("public")
+}
+
+model lookup_titles {
+  title_code String  @id(map: "PK_7d56771b6d78cbe8690a44481cc") @db.VarChar(3)
+  short_name String? @db.VarChar(50)
+  name       String  @db.VarChar(100)
+
+  @@schema("public")
+}
+
+model lookup_abogroups {
+  abogroup_code String @id(map: "PK_f5f242cd07364f860b626748768") @db.VarChar(1)
+  abogroup      String @db.VarChar(10)
+
+  @@schema("public")
+}
+
+model lookup_rh {
+  rh_code String @id(map: "PK_517960fca1e64b73fec80761b30") @db.VarChar(1)
+  rhgroup String @db.VarChar(10)
+
+  @@schema("public")
+}
+
+model medical_assets {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  asset_code      String        @unique @db.VarChar(50)
+  item_id         String        @db.Uuid
+  receive_item_id Int?
+  serial_no       String?       @db.VarChar(100)
+  department_id   Int?
+  status          String        @default("READY") @db.VarChar(20)
+  purchase_date   DateTime?     @db.Timestamptz(6)
+  warranty_expire DateTime?     @db.Timestamptz(6)
+  note            String?
+  created_at      DateTime?     @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime?     @default(now()) @updatedAt @db.Timestamptz(6)
+  asset_units     asset_units[]
+  departments     departments?  @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_asset_department")
+  items           items         @relation(fields: [item_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_asset_item")
+  receive_item    receive_item? @relation(fields: [receive_item_id], references: [id], onUpdate: NoAction, map: "fk_asset_receive_item")
+
+  @@index([asset_code], map: "idx_medical_assets_asset_code")
+  @@index([department_id], map: "idx_medical_assets_dept_id")
+  @@index([item_id], map: "idx_medical_assets_item_id")
+  @@index([status], map: "idx_medical_assets_status")
+  @@schema("inventory")
+}
+
+model reusable_item_units {
+  id              String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  unit_code       String                    @unique @db.VarChar(50)
+  item_id         String                    @db.Uuid
+  receive_item_id Int?
+  serial_no       String?                   @db.VarChar(100)
+  status          String                    @default("AVAILABLE") @db.VarChar(20)
+  condition       String                    @default("GOOD") @db.VarChar(20)
+  note            String?
+  created_at      DateTime?                 @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime?                 @default(now()) @updatedAt @db.Timestamptz(6)
+  deleted_at      DateTime?                 @db.Timestamptz(6)
+  department_id   Int?
+  movement_logs   reusable_item_unit_logs[]
+  departments     departments?              @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_department")
+  items           items                     @relation(fields: [item_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reusable_unit_item")
+  receive_item    receive_item?             @relation(fields: [receive_item_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reusable_unit_receive_item")
+
+  @@index([item_id], map: "idx_reusable_units_item_id")
+  @@index([status], map: "idx_reusable_units_status")
+  @@schema("inventory")
+}
+
+model reusable_item_unit_logs {
+  id                 Int                 @id @default(autoincrement())
+  unit_id            String              @db.Uuid
+  action             String              @db.VarChar(30)
+  from_department_id Int?
+  to_department_id   Int?
+  ref_doc_no         String?             @db.VarChar(50)
+  note               String?
+  performed_by       String?             @db.Uuid
+  created_at         DateTime?           @default(now()) @db.Timestamptz(6)
+  reusable_item_unit reusable_item_units @relation(fields: [unit_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_reusable_unit_log_unit")
+
+  @@index([action], map: "idx_reusable_unit_logs_action")
+  @@index([created_at], map: "idx_reusable_unit_logs_created_at")
+  @@index([unit_id], map: "idx_reusable_unit_logs_unit_id")
+  @@schema("inventory")
+}
+
+model lookup_sex {
+  sex_code String @id(map: "PK_3d28c4cb17f318526ef564c9f84") @db.VarChar(1)
+  sex      String @db.VarChar(100)
+
+  @@schema("public")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model audit_log_entries {
+  instance_id String?   @db.Uuid
+  id          String    @id @db.Uuid
+  payload     Json?     @db.Json
+  created_at  DateTime? @db.Timestamptz(6)
+  ip_address  String    @default("") @db.VarChar(64)
+
+  @@index([instance_id], map: "audit_logs_instance_id_idx")
+  @@schema("auth")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model custom_oauth_providers {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider_type         String
+  identifier            String    @unique
+  name                  String
+  client_id             String
+  client_secret         String
+  acceptable_client_ids String[]  @default([])
+  scopes                String[]  @default([])
+  pkce_enabled          Boolean   @default(true)
+  attribute_mapping     Json      @default("{}")
+  authorization_params  Json      @default("{}")
+  enabled               Boolean   @default(true)
+  email_optional        Boolean   @default(false)
+  issuer                String?
+  discovery_url         String?
+  skip_nonce_check      Boolean   @default(false)
+  cached_discovery      Json?
+  discovery_cached_at   DateTime? @db.Timestamptz(6)
+  authorization_url     String?
+  token_url             String?
+  userinfo_url          String?
+  jwks_uri              String?
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([created_at])
+  @@index([enabled])
+  @@index([identifier])
+  @@index([provider_type])
+  @@schema("auth")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model flow_state {
+  id                     String                 @id @db.Uuid
+  user_id                String?                @db.Uuid
+  auth_code              String?
+  code_challenge_method  code_challenge_method?
+  code_challenge         String?
+  provider_type          String
+  provider_access_token  String?
+  provider_refresh_token String?
+  created_at             DateTime?              @db.Timestamptz(6)
+  updated_at             DateTime?              @db.Timestamptz(6)
+  authentication_method  String
+  auth_code_issued_at    DateTime?              @db.Timestamptz(6)
+  invite_token           String?
+  referrer               String?
+  oauth_client_state_id  String?                @db.Uuid
+  linking_target_id      String?                @db.Uuid
+  email_optional         Boolean                @default(false)
+  saml_relay_states      saml_relay_states[]
+
+  @@index([created_at(sort: Desc)])
+  @@index([auth_code], map: "idx_auth_code")
+  @@index([user_id, authentication_method], map: "idx_user_id_auth_method")
+  @@schema("auth")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model identities {
+  provider_id     String
+  user_id         String    @db.Uuid
+  identity_data   Json
+  provider        String
+  last_sign_in_at DateTime? @db.Timestamptz(6)
+  created_at      DateTime? @db.Timestamptz(6)
+  updated_at      DateTime? @db.Timestamptz(6)
+  email           String?   @default(dbgenerated("lower((identity_data ->> 'email'::text))"))
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  users           users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([provider_id, provider], map: "identities_provider_id_provider_unique")
+  @@index([email])
+  @@index([user_id])
+  @@schema("auth")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model instances {
+  id              String    @id @db.Uuid
+  uuid            String?   @db.Uuid
+  raw_base_config String?
+  created_at      DateTime? @db.Timestamptz(6)
+  updated_at      DateTime? @db.Timestamptz(6)
+
+  @@schema("auth")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model mfa_amr_claims {
+  session_id            String   @db.Uuid
+  created_at            DateTime @db.Timestamptz(6)
+  updated_at            DateTime @db.Timestamptz(6)
+  authentication_method String
+  id                    String   @id(map: "amr_id_pk") @db.Uuid
+  sessions              sessions @relation(fields: [session_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([session_id, authentication_method], map: "mfa_amr_claims_session_id_authentication_method_pkey")
+  @@schema("auth")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model mfa_challenges {
+  id                     String      @id @db.Uuid
+  factor_id              String      @db.Uuid
+  created_at             DateTime    @db.Timestamptz(6)
+  verified_at            DateTime?   @db.Timestamptz(6)
+  ip_address             String      @db.Inet
+  otp_code               String?
+  web_authn_session_data Json?
+  mfa_factors            mfa_factors @relation(fields: [factor_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "mfa_challenges_auth_factor_id_fkey")
+
+  @@index([created_at(sort: Desc)], map: "mfa_challenge_created_at_idx")
+  @@schema("auth")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model mfa_factors {
+  id                           String           @id @db.Uuid
+  user_id                      String           @db.Uuid
+  friendly_name                String?
+  factor_type                  factor_type
+  status                       factor_status
+  created_at                   DateTime         @db.Timestamptz(6)
+  updated_at                   DateTime         @db.Timestamptz(6)
+  secret                       String?
+  phone                        String?
+  last_challenged_at           DateTime?        @unique @db.Timestamptz(6)
+  web_authn_credential         Json?
+  web_authn_aaguid             String?          @db.Uuid
+  last_webauthn_challenge_data Json?
+  mfa_challenges               mfa_challenges[]
+  users                        users            @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([user_id, phone], map: "unique_phone_factor_per_user")
+  @@index([user_id, created_at], map: "factor_id_created_at_idx")
+  @@index([user_id])
+  @@schema("auth")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model oauth_authorizations {
+  id                    String                     @id @db.Uuid
+  authorization_id      String                     @unique
+  client_id             String                     @db.Uuid
+  user_id               String?                    @db.Uuid
+  redirect_uri          String
+  scope                 String
+  state                 String?
+  resource              String?
+  code_challenge        String?
+  code_challenge_method code_challenge_method?
+  response_type         oauth_response_type        @default(code)
+  status                oauth_authorization_status @default(pending)
+  authorization_code    String?                    @unique
+  created_at            DateTime                   @default(now()) @db.Timestamptz(6)
+  expires_at            DateTime                   @default(dbgenerated("(now() + '00:03:00'::interval)")) @db.Timestamptz(6)
+  approved_at           DateTime?                  @db.Timestamptz(6)
+  nonce                 String?
+  oauth_clients         oauth_clients              @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                 users?                     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@schema("auth")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model oauth_client_states {
+  id            String   @id @db.Uuid
+  provider_type String
+  code_verifier String?
+  created_at    DateTime @db.Timestamptz(6)
+
+  @@index([created_at], map: "idx_oauth_client_states_created_at")
+  @@schema("auth")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model oauth_clients {
+  id                         String                  @id @db.Uuid
+  client_secret_hash         String?
+  registration_type          oauth_registration_type
+  redirect_uris              String
+  grant_types                String
+  client_name                String?
+  client_uri                 String?
+  logo_uri                   String?
+  created_at                 DateTime                @default(now()) @db.Timestamptz(6)
+  updated_at                 DateTime                @default(now()) @db.Timestamptz(6)
+  deleted_at                 DateTime?               @db.Timestamptz(6)
+  client_type                oauth_client_type       @default(confidential)
+  token_endpoint_auth_method String
+  oauth_authorizations       oauth_authorizations[]
+  oauth_consents             oauth_consents[]
+  sessions                   sessions[]
+
+  @@index([deleted_at])
+  @@schema("auth")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model oauth_consents {
+  id            String        @id @db.Uuid
+  user_id       String        @db.Uuid
+  client_id     String        @db.Uuid
+  scopes        String
+  granted_at    DateTime      @default(now()) @db.Timestamptz(6)
+  revoked_at    DateTime?     @db.Timestamptz(6)
+  oauth_clients oauth_clients @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users         users         @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([user_id, client_id], map: "oauth_consents_user_client_unique")
+  @@index([user_id, granted_at(sort: Desc)], map: "oauth_consents_user_order_idx")
+  @@schema("auth")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model one_time_tokens {
+  id         String              @id @db.Uuid
+  user_id    String              @db.Uuid
+  token_type one_time_token_type
+  token_hash String
+  relates_to String
+  created_at DateTime            @default(now()) @db.Timestamp(6)
+  updated_at DateTime            @default(now()) @db.Timestamp(6)
+  users      users               @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([user_id, token_type])
+  @@index([relates_to], map: "one_time_tokens_relates_to_hash_idx", type: Hash)
+  @@index([token_hash], map: "one_time_tokens_token_hash_hash_idx", type: Hash)
+  @@schema("auth")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model refresh_tokens {
+  instance_id String?   @db.Uuid
+  id          BigInt    @id @default(autoincrement())
+  token       String?   @unique(map: "refresh_tokens_token_unique") @db.VarChar(255)
+  user_id     String?   @db.VarChar(255)
+  revoked     Boolean?
+  created_at  DateTime? @db.Timestamptz(6)
+  updated_at  DateTime? @db.Timestamptz(6)
+  parent      String?   @db.VarChar(255)
+  session_id  String?   @db.Uuid
+  sessions    sessions? @relation(fields: [session_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([instance_id])
+  @@index([instance_id, user_id])
+  @@index([parent])
+  @@index([session_id, revoked])
+  @@index([updated_at(sort: Desc)])
+  @@schema("auth")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model saml_providers {
+  id                String        @id @db.Uuid
+  sso_provider_id   String        @db.Uuid
+  entity_id         String        @unique
+  metadata_xml      String
+  metadata_url      String?
+  attribute_mapping Json?
+  created_at        DateTime?     @db.Timestamptz(6)
+  updated_at        DateTime?     @db.Timestamptz(6)
+  name_id_format    String?
+  sso_providers     sso_providers @relation(fields: [sso_provider_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([sso_provider_id])
+  @@schema("auth")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model saml_relay_states {
+  id              String        @id @db.Uuid
+  sso_provider_id String        @db.Uuid
+  request_id      String
+  for_email       String?
+  redirect_to     String?
+  created_at      DateTime?     @db.Timestamptz(6)
+  updated_at      DateTime?     @db.Timestamptz(6)
+  flow_state_id   String?       @db.Uuid
+  flow_state      flow_state?   @relation(fields: [flow_state_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  sso_providers   sso_providers @relation(fields: [sso_provider_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([created_at(sort: Desc)])
+  @@index([for_email])
+  @@index([sso_provider_id])
+  @@schema("auth")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model schema_migrations {
+  version String @id @db.VarChar(255)
+
+  @@schema("auth")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model sessions {
+  id                     String           @id @db.Uuid
+  user_id                String           @db.Uuid
+  created_at             DateTime?        @db.Timestamptz(6)
+  updated_at             DateTime?        @db.Timestamptz(6)
+  factor_id              String?          @db.Uuid
+  aal                    aal_level?
+  not_after              DateTime?        @db.Timestamptz(6)
+  refreshed_at           DateTime?        @db.Timestamp(6)
+  user_agent             String?
+  ip                     String?          @db.Inet
+  tag                    String?
+  oauth_client_id        String?          @db.Uuid
+  refresh_token_hmac_key String?
+  refresh_token_counter  BigInt?
+  scopes                 String?
+  mfa_amr_claims         mfa_amr_claims[]
+  refresh_tokens         refresh_tokens[]
+  oauth_clients          oauth_clients?   @relation(fields: [oauth_client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                  users            @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([not_after(sort: Desc)])
+  @@index([oauth_client_id])
+  @@index([user_id])
+  @@index([user_id, created_at], map: "user_id_created_at_idx")
+  @@schema("auth")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model sso_domains {
+  id              String        @id @db.Uuid
+  sso_provider_id String        @db.Uuid
+  domain          String
+  created_at      DateTime?     @db.Timestamptz(6)
+  updated_at      DateTime?     @db.Timestamptz(6)
+  sso_providers   sso_providers @relation(fields: [sso_provider_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([sso_provider_id])
+  @@schema("auth")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model sso_providers {
+  id                String              @id @db.Uuid
+  resource_id       String?
+  created_at        DateTime?           @db.Timestamptz(6)
+  updated_at        DateTime?           @db.Timestamptz(6)
+  disabled          Boolean?
+  saml_providers    saml_providers[]
+  saml_relay_states saml_relay_states[]
+  sso_domains       sso_domains[]
+
+  @@index([resource_id], map: "sso_providers_resource_id_pattern_idx")
+  @@schema("auth")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model users {
+  instance_id                 String?                @db.Uuid
+  id                          String                 @id @db.Uuid
+  aud                         String?                @db.VarChar(255)
+  role                        String?                @db.VarChar(255)
+  email                       String?                @db.VarChar(255)
+  encrypted_password          String?                @db.VarChar(255)
+  email_confirmed_at          DateTime?              @db.Timestamptz(6)
+  invited_at                  DateTime?              @db.Timestamptz(6)
+  confirmation_token          String?                @db.VarChar(255)
+  confirmation_sent_at        DateTime?              @db.Timestamptz(6)
+  recovery_token              String?                @db.VarChar(255)
+  recovery_sent_at            DateTime?              @db.Timestamptz(6)
+  email_change_token_new      String?                @db.VarChar(255)
+  email_change                String?                @db.VarChar(255)
+  email_change_sent_at        DateTime?              @db.Timestamptz(6)
+  last_sign_in_at             DateTime?              @db.Timestamptz(6)
+  raw_app_meta_data           Json?
+  raw_user_meta_data          Json?
+  is_super_admin              Boolean?
+  created_at                  DateTime?              @db.Timestamptz(6)
+  updated_at                  DateTime?              @db.Timestamptz(6)
+  phone                       String?                @unique
+  phone_confirmed_at          DateTime?              @db.Timestamptz(6)
+  phone_change                String?                @default("")
+  phone_change_token          String?                @default("") @db.VarChar(255)
+  phone_change_sent_at        DateTime?              @db.Timestamptz(6)
+  confirmed_at                DateTime?              @default(dbgenerated("LEAST(email_confirmed_at, phone_confirmed_at)")) @db.Timestamptz(6)
+  email_change_token_current  String?                @default("") @db.VarChar(255)
+  email_change_confirm_status Int?                   @default(0) @db.SmallInt
+  banned_until                DateTime?              @db.Timestamptz(6)
+  reauthentication_token      String?                @default("") @db.VarChar(255)
+  reauthentication_sent_at    DateTime?              @db.Timestamptz(6)
+  is_sso_user                 Boolean                @default(false)
+  deleted_at                  DateTime?              @db.Timestamptz(6)
+  is_anonymous                Boolean                @default(false)
+  identities                  identities[]
+  mfa_factors                 mfa_factors[]
+  oauth_authorizations        oauth_authorizations[]
+  oauth_consents              oauth_consents[]
+  one_time_tokens             one_time_tokens[]
+  sessions                    sessions[]
+  webauthn_challenges         webauthn_challenges[]
+  webauthn_credentials        webauthn_credentials[]
+  profiles                    profiles?
+
+  @@index([instance_id])
+  @@index([is_anonymous])
+  @@schema("auth")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model webauthn_challenges {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id        String?  @db.Uuid
+  challenge_type String
+  session_data   Json
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+  expires_at     DateTime @db.Timestamptz(6)
+  users          users?   @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([expires_at])
+  @@index([user_id])
+  @@schema("auth")
+}
+
+model webauthn_credentials {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id          String    @db.Uuid
+  credential_id    Bytes     @unique
+  public_key       Bytes
+  attestation_type String    @default("")
+  aaguid           String?   @db.Uuid
+  sign_count       BigInt    @default(0)
+  transports       Json      @default("[]")
+  backup_eligible  Boolean   @default(false)
+  backed_up        Boolean   @default(false)
+  friendly_name    String    @default("")
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime  @default(now()) @db.Timestamptz(6)
+  last_used_at     DateTime? @db.Timestamptz(6)
+  users            users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id])
+  @@schema("auth")
+}
+
+model borrower_details {
+  id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fullname           String               @db.VarChar(255)
+  address            String
+  subdistrict        String               @db.VarChar(100)
+  district           String               @db.VarChar(100)
+  province           String               @db.VarChar(100)
+  zipcode            String               @db.VarChar(10)
+  phone              String               @db.VarChar(20)
+  id_card_url        String?
+  id_card_public_id  String?              @db.VarChar(100)
+  notes              String?
+  created_at         DateTime?            @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime?            @default(now()) @db.Timestamptz(6)
+  requisition_header requisition_header[]
+
+  @@index([fullname], map: "idx_borrower_fullname")
+  @@index([phone], map: "idx_borrower_phone")
+  @@schema("inventory")
+}
+
+model lookup_frequency {
+  frequency_code String @id(map: "PK_8eb645f68a6b9cc1c35f5fe0fc1") @db.VarChar(5)
+  label          String @db.VarChar(50)
+
+  @@schema("public")
+}
+
+model lookup_relative {
+  relative_code String @id(map: "PK_7a3bd3edbe6e5b80356f747de56") @db.VarChar(1)
+  relative      String @db.VarChar(10)
+
+  @@schema("public")
+}
+
+model profiles {
+  id                                                           String                    @id(map: "users_pkey") @db.Uuid
+  firstname_th                                                 String?                   @db.VarChar(255)
+  lastname_th                                                  String?                   @db.VarChar(255)
+  firstname_en                                                 String?                   @db.VarChar(255)
+  lastname_en                                                  String?                   @db.VarChar(255)
+  sex_id                                                       Int?
+  birth_date                                                   DateTime?                 @db.Date
+  nationality                                                  Int?
+  race                                                         Int?
+  mstatus                                                      Int?
+  occupation                                                   Int?
+  phone                                                        String?                   @db.VarChar(15)
+  current_maininscl                                            Int?
+  subdistrict_code                                             Int?
+  district_code                                                Int?
+  province_code                                                Int?
+  zip_code                                                     Int?
+  address_detail                                               String?                   @db.VarChar(255)
+  cid                                                          String?                   @db.VarChar(13)
+  profession_id                                                String?                   @db.VarChar(50)
+  title_code                                                   String?                   @db.VarChar(3)
+  status_                                                      String?                   @map("status ") @db.VarChar
+  created_at                                                   DateTime?                 @default(now()) @db.Timestamptz(6)
+  updated_at                                                   DateTime?                 @db.Timestamptz(6)
+  deleted_at                                                   DateTime?                 @db.Timestamptz(6)
+  department_id                                                Int[]                     @default([])
+  system_id                                                    Int[]                     @default([])
+  role_id                                                      Int?
+  notification_recipients                                      notification_recipients[]
+  notifications_created                                        notifications[]           @relation("notifications_created_by")
+  receive_header                                               receive_header[]
+  requisition_header_requisition_header_approver_idToprofiles  requisition_header[]      @relation("requisition_header_approver_idToprofiles")
+  requisition_header_requisition_header_requester_idToprofiles requisition_header[]      @relation("requisition_header_requester_idToprofiles")
+  return_log                                                   return_log[]
+  users                                                        users                     @relation(fields: [id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@schema("public")
+}
+
+model notifications {
+  id                 Int                       @id @default(autoincrement())
+  type               String                    @db.VarChar(80)
+  severity           String                    @default("INFO") @db.VarChar(20)
+  title              String                    @db.VarChar(200)
+  body               String?
+  entity_type        String?                   @db.VarChar(60)
+  entity_id          String?                   @db.VarChar(100)
+  entity_code        String?                   @db.VarChar(100)
+  dedupe_key         String?                   @unique(map: "uq_notifications_dedupe_key") @db.VarChar(200)
+  metadata           Json?
+  created_by_id      String?                   @db.Uuid
+  created_at         DateTime                  @default(now()) @db.Timestamptz(6)
+  expires_at         DateTime?                 @db.Timestamptz(6)
+  recipients         notification_recipients[]
+  created_by_profile profiles?                 @relation("notifications_created_by", fields: [created_by_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_notifications_created_by_profile")
+
+  @@index([type], map: "idx_notifications_type")
+  @@index([created_at(sort: Desc)], map: "idx_notifications_created_at")
+  @@index([entity_type, entity_id], map: "idx_notifications_entity")
+  @@schema("inventory")
+}
+
+model notification_recipients {
+  id              Int           @id @default(autoincrement())
+  notification_id Int
+  recipient_id    String        @db.Uuid
+  is_read         Boolean       @default(false)
+  delivered_at    DateTime?     @default(now()) @db.Timestamptz(6)
+  read_at         DateTime?     @db.Timestamptz(6)
+  created_at      DateTime      @default(now()) @db.Timestamptz(6)
+  notification    notifications @relation(fields: [notification_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_notification_recipient_notification")
+  profiles        profiles      @relation(fields: [recipient_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_notification_recipient_profile")
+
+  @@unique([notification_id, recipient_id], map: "uq_notification_recipient")
+  @@index([recipient_id, is_read, created_at(sort: Desc)], map: "idx_notification_recipient_unread")
+  @@index([recipient_id, created_at(sort: Desc)], map: "idx_notification_recipient_created")
+  @@schema("inventory")
+}
+
+model roles {
+  id           Int       @id @default(autoincrement())
+  code         String    @unique
+  role_name_en String
+  role_name_th String
+  description  String?
+  is_disabled  Boolean?  @default(false)
+  created_at   DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime? @default(now()) @db.Timestamptz(6)
+  deleted_at   DateTime? @db.Timestamptz(6)
+
+  @@schema("public")
+}
+
+model systems {
+  id          Int       @id @default(autoincrement())
+  system_code String    @unique
+  name_th     String
+  name_en     String
+  description String?
+  is_disabled Boolean?  @default(false)
+  created_at  DateTime? @default(now()) @db.Timestamptz(6)
+
+  @@schema("public")
+}
+
+model return_log {
+  id               Int              @id @default(autoincrement())
+  req_item_id      Int
+  qty              Int
+  return_date      DateTime?        @default(now()) @db.Timestamptz(6)
+  receiver_id      String           @db.Uuid
+  condition        String?
+  note             String?
+  profiles         profiles         @relation(fields: [receiver_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_return_log_receiver")
+  requisition_item requisition_item @relation(fields: [req_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_return_log_req_item")
+
+  @@index([req_item_id], map: "idx_return_log_req_item")
+  @@schema("inventory")
+}
+
+model lookup_allergy_severity {
+  severity_code String @id(map: "PK_9c8968774dabc50382b36b7c2c6") @db.VarChar(1)
+  label         String @db.VarChar(50)
+
+  @@schema("public")
+}
+
+model lookup_ward {
+  ward_code String @id(map: "PK_57dceb2eae725dd5f76ad1ebb2f") @db.VarChar(1)
+  ward      String @db.VarChar(5)
+
+  @@schema("public")
+}
+
+model lookup_district {
+  district        String          @id(map: "PK_e0b363f1dc2ca7aacc8caf14d7d") @db.VarChar(4)
+  provcode        String          @db.VarChar(2)
+  distcode        String          @db.VarChar(2)
+  value           String          @db.VarChar(100)
+  lookup_province lookup_province @relation(fields: [provcode], references: [province], onDelete: NoAction, onUpdate: NoAction, map: "FK_1f35dc9ce131dac36aa548d7bcf")
+
+  @@unique([provcode, distcode], map: "UQ_48960e8af70cc09f8798ba163b2")
+  @@schema("public")
+}
+
+model lookup_province {
+  province           String               @id(map: "PK_e53c63a93fa1009b252981dc918") @db.VarChar(2)
+  value              String               @db.VarChar(100)
+  zone               String?              @db.VarChar(2)
+  region             String?              @db.VarChar(2)
+  lookup_district    lookup_district[]
+  lookup_subdistrict lookup_subdistrict[]
+
+  @@schema("public")
+}
+
+model lookup_subdistrict {
+  subdistrict     String          @id(map: "PK_536aec56b7ba1e4641ecdb3c4a9") @db.VarChar(6)
+  provcode        String          @db.VarChar(2)
+  distcode        String          @db.VarChar(2)
+  subdistcode     String          @db.VarChar(2)
+  value           String          @db.VarChar(100)
+  lookup_province lookup_province @relation(fields: [provcode], references: [province], onDelete: NoAction, onUpdate: NoAction, map: "FK_45ca7926d0b1ac05cb9c5385e32")
+
+  @@schema("public")
+}
+
+model asset_units {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  asset_id       String         @db.Uuid
+  unit_no        String         @unique(map: "uq_asset_units_unit_no") @db.VarChar(50)
+  serial_no      String?        @db.VarChar(100)
+  department_id  Int?
+  status         String         @default("READY") @db.VarChar(20)
+  condition      String         @default("GOOD") @db.VarChar(20)
+  note           String?
+  created_at     DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime       @default(now()) @db.Timestamptz(6)
+  deleted_at     DateTime?      @db.Timestamptz(6)
+  medical_assets medical_assets @relation(fields: [asset_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_asset_units_asset")
+  departments    departments?   @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_asset_units_department")
+
+  @@index([asset_id], map: "idx_asset_units_asset_id")
+  @@index([department_id], map: "idx_asset_units_department_id")
+  @@index([status], map: "idx_asset_units_status")
+  @@schema("inventory")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model barcode_registry {
+  id            BigInt   @id @default(autoincrement())
+  barcode_value String   @unique(map: "uq_barcode_registry_value") @db.VarChar(120)
+  entity_type   String   @db.VarChar(30)
+  entity_id     String   @db.VarChar(100)
+  is_primary    Boolean  @default(false)
+  is_active     Boolean  @default(true)
+  metadata      Json?
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([is_active], map: "idx_barcode_registry_active")
+  @@index([entity_type, entity_id], map: "idx_barcode_registry_entity")
+  @@schema("inventory")
+}
+
+model system_settings {
+  id         Int       @id @default(autoincrement())
+  key        String    @unique @db.VarChar(100)
+  value      String
+  updated_at DateTime? @default(now()) @db.Timestamptz(6)
+  updated_by String?   @db.VarChar(100)
+
+  @@schema("inventory")
+}
+
+model lookup_ordertypes {
+  ordertype String @id(map: "PK_f27615a6ee1a344eaf9a5b94a95") @db.VarChar(5)
+  type      String
+
+  @@schema("public")
+}
+
+/// The underlying view does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+view view_items {
+  id             String    @unique @db.Uuid
+  code           String?
+  name           String?
+  description    String?
+  category_id    String?   @db.Uuid
+  category_name  String?   @db.VarChar(255)
+  unit_id        String?   @db.Uuid
+  unit_name      String?
+  warehouse_id   String?   @db.Uuid
+  warehouse_name String?
+  current_stock  Int?
+  min_stock      Int?
+  sell_price     Decimal?  @db.Decimal(10, 2)
+  status         String?   @db.VarChar(20)
+  image_url      String?
+  created_at     DateTime? @db.Timestamptz(6)
+  updated_at     DateTime? @db.Timestamptz(6)
+  deleted_at     DateTime? @db.Timestamptz(6)
+
+  @@schema("inventory")
+}
+
+enum aal_level {
+  aal1
+  aal2
+  aal3
+
+  @@schema("auth")
+}
+
+enum code_challenge_method {
+  s256
+  plain
+
+  @@schema("auth")
+}
+
+enum factor_status {
+  unverified
+  verified
+
+  @@schema("auth")
+}
+
+enum factor_type {
+  totp
+  webauthn
+  phone
+
+  @@schema("auth")
+}
+
+enum oauth_authorization_status {
+  pending
+  approved
+  denied
+  expired
+
+  @@schema("auth")
+}
+
+enum oauth_client_type {
+  public
+  confidential
+
+  @@schema("auth")
+}
+
+enum oauth_registration_type {
+  dynamic
+  manual
+
+  @@schema("auth")
+}
+
+enum oauth_response_type {
+  code
+
+  @@schema("auth")
+}
+
+enum one_time_token_type {
+  confirmation_token
+  reauthentication_token
+  recovery_token
+  email_change_token_new
+  email_change_token_current
+  phone_change_token
+
+  @@schema("auth")
+}

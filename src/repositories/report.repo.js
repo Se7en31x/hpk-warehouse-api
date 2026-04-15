@@ -61,7 +61,7 @@ const findExpiredLots = async ({ skip, limit, where }) => {
       orderBy: { expired_at: 'asc' },
       select: {
         id: true, lot_code: true, quantity: true, expired_at: true,
-        items:      { select: { code: true, name: true, unit: { select: { name: true } } } },
+        items:      { select: { code: true, name: true, unit: { select: { name: true } }, categories: { select: { name: true } } } },
         warehouses: { select: { name: true } },
       },
     }),

@@ -392,6 +392,7 @@ const getNearExpiryReport = async ({ page, limit, daysAhead = 90, warehouseId, s
         lotCode:   r.lot_code,
         itemCode:  r.items?.code  || '-',
         itemName:  r.items?.name  || '-',
+        category:  r.items?.categories ? r.items.categories.name : '-',
         warehouse: r.warehouses?.name || '-',
         quantity:  safeNumber(r.quantity),
         unit:      r.items?.unit?.name || '-',

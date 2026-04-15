@@ -1178,6 +1178,13 @@ model lookup_ordertypes {
   @@schema("public")
 }
 
+model lookup_clinics {
+  clinic_code String @id(map: "PK_f9ed3451d29c661b3b13a74bfcd") @db.VarChar(20)
+  clinic_name String @db.VarChar(100)
+
+  @@schema("public")
+}
+
 /// The underlying view does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
 view view_items {
   id             String    @unique @db.Uuid

@@ -23,7 +23,7 @@ const getAssets = async (req, res, next) => {
 const getAssetById = async (req, res, next) => {
     try {
         const result = await assetService.getAssetById(req.params.id);
-        return util.sendResponse(res, 200, result);
+        return util.sendResponse(res, 200, 'get asset by id success', result);
     } catch (err) {
         next(err);
     }
@@ -38,8 +38,25 @@ const updateAsset = async (req, res, next) => {
     }
 };
 
+/**
+ * GET /v1/assets/counts?item_ids=uuid1,uuid2,...
+ * Returns { [item_id]: registeredCount } — the number of physical units
+ * registered in medical_assets for each requested item type.
+ */
+const getAssetCounts = async (req, res, next) => {
+    try {
+        const raw = (req.query.item_ids || '').toString().trim();
+        const itemIds = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+        const counts = await assetService.getAssetCountsByItemIds(itemIds);
+        return util.sendResponse(res, 200, 'get asset counts success', counts);
+    } catch (err) {
+        next(err);
+    }
+};
+
 module.exports = {
     getAssets,
     getAssetById,
     updateAsset,
+    getAssetCounts,
 };

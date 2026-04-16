@@ -1,5 +1,6 @@
 const itemRepo = require('../repositories/item.repo');
-const { uploadToCloudinary } = require('../middleware/upload');
+const borrowerRepo = require('../repositories/requisition.repo');
+const { uploadToCloudinary, uploadDocumentToCloudinary } = require('../middleware/upload');
 const cloudinary = require('../config/cloudinary');
 
 const updateItemImage = async (id, buffer) => {
@@ -32,7 +33,26 @@ const removeItemImage = async (id) => {
 	});
 };
 
+const uploadBorrowerDocument = async (borrowerId, buffer) => {
+	const existing = await borrowerRepo.getBorrowerById(borrowerId);
+	if (!existing) throw new Error('Borrower not found');
+
+	// Delete old Cloudinary asset if one exists
+	if (existing.id_card_public_id) {
+		await cloudinary.uploader.destroy(existing.id_card_public_id, { resource_type: 'auto' }).catch(() => {});
+	}
+
+	const result = await uploadDocumentToCloudinary(buffer, 'borrowers');
+	await borrowerRepo.updateBorrowerDocument(borrowerId, {
+		id_card_url: result.secure_url,
+		id_card_public_id: result.public_id,
+	});
+
+	return { id_card_url: result.secure_url };
+};
+
 module.exports = {
 	updateItemImage,
 	removeItemImage,
+	uploadBorrowerDocument,
 };

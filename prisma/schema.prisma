@@ -70,6 +70,7 @@ model items {
   reusable_return_request_items reusable_return_request_items[]
   stocks_movement               stocks_movement[]
 
+  @@index([deleted_at], map: "idx_items_deleted_at")
   @@schema("inventory")
 }
 
@@ -111,8 +112,9 @@ model requisition_header {
   borrower_details                                   borrower_details?  @relation(fields: [borrower_id], references: [id], onUpdate: NoAction, map: "fk_requisition_borrower")
   requisition_item                                   requisition_item[]
 
-  @@index([doc_no], map: "idx_req_header_doc_no")
-  @@index([status], map: "idx_req_header_status")
+  @@index([doc_no],     map: "idx_req_header_doc_no")
+  @@index([status],     map: "idx_req_header_status")
+  @@index([created_at], map: "idx_req_header_created_at")
   @@schema("inventory")
 }
 
@@ -165,6 +167,10 @@ model item_lots {
   warehouses      warehouses?       @relation(fields: [warehouse_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "item_lot_warehouse_fk")
 
   @@unique([item_id, lot_code], map: "item_lot_unique_idx")
+  @@index([deleted_at],             map: "idx_item_lots_deleted_at")
+  @@index([expired_at],             map: "idx_item_lots_expired_at")
+  @@index([deleted_at, expired_at], map: "idx_item_lots_deleted_expired")
+  @@index([item_id, quantity],      map: "idx_item_lots_item_qty")
   @@schema("inventory")
 }
 
@@ -300,8 +306,9 @@ model receive_header {
   users                profiles?        @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "receive_header_users_fk")
   receive_item         receive_item[]
 
-  @@index([doc_no], map: "idx_receive_header_doc_no")
-  @@index([type], map: "idx_receive_header_type")
+  @@index([doc_no],      map: "idx_receive_header_doc_no")
+  @@index([type],        map: "idx_receive_header_type")
+  @@index([receive_date],map: "idx_receive_header_date")
   @@schema("inventory")
 }
 
@@ -1095,9 +1102,11 @@ model lookup_district {
   provcode        String          @db.VarChar(2)
   distcode        String          @db.VarChar(2)
   value           String          @db.VarChar(100)
+  zip_code        String?         @db.VarChar(10)
   lookup_province lookup_province @relation(fields: [provcode], references: [province], onDelete: NoAction, onUpdate: NoAction, map: "FK_1f35dc9ce131dac36aa548d7bcf")
 
   @@unique([provcode, distcode], map: "UQ_48960e8af70cc09f8798ba163b2")
+  @@index([provcode], map: "idx_lookup_district_provcode")
   @@schema("public")
 }
 
@@ -1118,8 +1127,11 @@ model lookup_subdistrict {
   distcode        String          @db.VarChar(2)
   subdistcode     String          @db.VarChar(2)
   value           String          @db.VarChar(100)
+  zip_code        String?         @db.VarChar(10)
   lookup_province lookup_province @relation(fields: [provcode], references: [province], onDelete: NoAction, onUpdate: NoAction, map: "FK_45ca7926d0b1ac05cb9c5385e32")
 
+  @@index([provcode, distcode], map: "idx_lookup_subdistrict_prov_dist")
+  @@index([zip_code],           map: "idx_lookup_subdistrict_zip")
   @@schema("public")
 }
 

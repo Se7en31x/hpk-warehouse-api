@@ -28,7 +28,21 @@ const removeItemImage = async (req, res) => {
 	}
 };
 
+const uploadBorrowerDocument = async (req, res) => {
+	try {
+		const { id } = req.params;
+		if (!req.file) {
+			return util.sendResponse(res, 400, 'No document file provided');
+		}
+		const result = await fileService.uploadBorrowerDocument(id, req.file.buffer);
+		return util.sendResponse(res, 200, 'Upload borrower document success', result);
+	} catch (error) {
+		return util.sendResponse(res, 500, error.message);
+	}
+};
+
 module.exports = {
 	updateItemImage,
 	removeItemImage,
+	uploadBorrowerDocument,
 };

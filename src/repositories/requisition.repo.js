@@ -125,6 +125,14 @@ const createBorrowerDetails = async (data, tx = prisma) => {
     return tx.borrower_details.create({ data });
 };
 
+const getBorrowerById = async (id) => {
+    return prisma.borrower_details.findUnique({ where: { id } });
+};
+
+const updateBorrowerDocument = async (id, data) => {
+    return prisma.borrower_details.update({ where: { id }, data });
+};
+
 const createReturnLog = async (data, tx = prisma) => {
     return tx.return_log.create({ data });
 };
@@ -359,6 +367,8 @@ module.exports = {
     createItems,
     createAllocation,
     createBorrowerDetails,
+    getBorrowerById,
+    updateBorrowerDocument,
     createReturnLog,
     selectItemsForRequisition,
     SelectRequisitionById,

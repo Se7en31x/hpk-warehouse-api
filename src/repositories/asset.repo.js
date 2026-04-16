@@ -112,10 +112,26 @@ const updateAsset = async (id, data, tx = prisma) => {
     });
 };
 
+/**
+ * Returns the count of medical_assets grouped by item_id.
+ * Used by the asset list page to show how many units are registered per item type.
+ * @param {string[]} itemIds
+ * @returns {Promise<Array<{ item_id: string, _count: { _all: number } }>>}
+ */
+const selectAssetCountsByItemIds = async (itemIds = []) => {
+    if (!itemIds.length) return [];
+    return prisma.medical_assets.groupBy({
+        by: ['item_id'],
+        where: { item_id: { in: itemIds } },
+        _count: { _all: true },
+    });
+};
+
 module.exports = {
     generateAssetCode,
     createAsset,
     selectAllAssets,
     selectAssetById,
     updateAsset,
+    selectAssetCountsByItemIds,
 };

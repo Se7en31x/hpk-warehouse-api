@@ -113,9 +113,23 @@ const updateAsset = async (id, data) => {
     return mapAssetResponse(updated);
 };
 
+/**
+ * Returns a map of { [item_id]: registeredCount } for the given item UUIDs.
+ * Each medical_assets row = one physical unit, so COUNT(*) = registered quantity.
+ */
+const getAssetCountsByItemIds = async (itemIds = []) => {
+    if (!itemIds.length) return {};
+    const rows = await assetRepo.selectAssetCountsByItemIds(itemIds);
+    return rows.reduce((acc, row) => {
+        acc[row.item_id] = row._count._all;
+        return acc;
+    }, {});
+};
+
 module.exports = {
     getAssets,
     getAssetById,
     updateAsset,
     mapAssetResponse,
+    getAssetCountsByItemIds,
 };

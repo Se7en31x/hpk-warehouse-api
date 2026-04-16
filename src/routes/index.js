@@ -23,6 +23,7 @@ const settingsRoutes = require('./settings.routes')
 const analyticsRoutes = require('./analytics.routes')
 const reportsRoutes = require('./reports.routes')
 const profileRoutes = require('./profile.routes')
+const lookupRoutes  = require('./lookup.routes')
 
 router.get('/health', healthController.check)
 
@@ -50,5 +51,6 @@ v1.use('/settings', settingsRoutes)
 v1.use('/analytics', analyticsRoutes)
 v1.use('/reports', reportsRoutes)
 v1.use('/user/profile', profileRoutes)
+v1.use('/lookup',       lookupRoutes)
 
 module.exports = router

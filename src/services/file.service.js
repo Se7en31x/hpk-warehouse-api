@@ -43,6 +43,7 @@ const uploadBorrowerDocument = async (borrowerId, buffer) => {
 	}
 
 	const result = await uploadDocumentToCloudinary(buffer, 'borrowers');
+	console.log('[Cloudinary] uploadBorrowerDocument — resource_type:', result.resource_type, '| url:', result.secure_url);
 	await borrowerRepo.updateBorrowerDocument(borrowerId, {
 		id_card_url: result.secure_url,
 		id_card_public_id: result.public_id,

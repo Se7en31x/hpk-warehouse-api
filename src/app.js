@@ -10,8 +10,16 @@ app.use(cors())
 app.use(express.json())
 
 app.use((req, res, next) => {
-    req.io = getIO()
-    next()
+    try {
+        req.io = getIO();
+    } catch {
+        // Socket not yet initialized (e.g. running app.js standalone instead of server.js).
+        // Degrade gracefully: controllers that call req.io.emit() will get a no-op instead
+        // of a 500 error, so the actual DB operation still succeeds.
+        console.warn('[Socket] req.io not available — socket.io may not be initialized');
+        req.io = { emit: () => {}, to: () => ({ emit: () => {} }) };
+    }
+    next();
 })
 
 // intitail route

@@ -39,12 +39,16 @@ const getProfile = async (userSession) => {
   const userId = userSession?.sub   || null;
   const email  = userSession?.email || null;
 
+  console.log(`[profile.service] getProfile called — userId: ${userId} | email: ${email}`);
+
   if (!userId) {
+    console.warn('[profile.service] No userId in session — returning guest profile');
     return { id: null, email, role: { id: null, name: 'guest' }, departments: [] };
   }
 
   // 1. Fetch the profiles row
   const profile = await prisma.profiles.findUnique({ where: { id: userId } });
+  console.log(`[profile.service] profiles row found: ${profile ? 'YES' : 'NO (missing row for this UUID)'}`);
 
   // 2. Run all lookup queries in parallel (null-safe — each resolves to null when the FK is absent)
   const [

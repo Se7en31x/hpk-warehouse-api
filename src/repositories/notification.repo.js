@@ -36,7 +36,7 @@ const createNotification = async (data, recipientIds = [], tx = prisma) => {
   });
 };
 
-const selectNotificationFeed = async ({ recipientId, page = 1, limit = 20, unreadOnly = false }, tx = prisma) => {
+const selectNotificationFeed = async ({ recipientId, page = 1, limit = 20, unreadOnly = false, readOnly = false, severity = null }, tx = prisma) => {
   const where = {
     recipient_id: recipientId,
     notification: {
@@ -49,6 +49,12 @@ const selectNotificationFeed = async ({ recipientId, page = 1, limit = 20, unrea
 
   if (unreadOnly) {
     where.is_read = false;
+  } else if (readOnly) {
+    where.is_read = true;
+  }
+
+  if (severity) {
+    where.notification.severity = severity.toUpperCase();
   }
 
   const skip = (page - 1) * limit;

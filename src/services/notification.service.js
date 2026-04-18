@@ -5,7 +5,7 @@ const parsePage = (v, fallback) => {
   return Number.isInteger(n) && n > 0 ? n : fallback;
 };
 
-const getFeed = async ({ recipientId, page = 1, limit = 20, unreadOnly = false }) => {
+const getFeed = async ({ recipientId, page = 1, limit = 20, unreadOnly = false, readOnly = false, severity = null }) => {
   if (!recipientId) throw new Error('recipient_id is required');
 
   const safePage = parsePage(page, 1);
@@ -16,6 +16,8 @@ const getFeed = async ({ recipientId, page = 1, limit = 20, unreadOnly = false }
     page: safePage,
     limit: safeLimit,
     unreadOnly: Boolean(unreadOnly),
+    readOnly: Boolean(readOnly),
+    severity: severity || null,
   });
 
   const totalPages = Math.max(1, Math.ceil(total / safeLimit));

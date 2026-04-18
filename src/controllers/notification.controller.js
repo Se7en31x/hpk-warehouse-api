@@ -31,6 +31,8 @@ const parseListQuery = (query) => ({
   page: Math.max(1, Number(query.page) || 1),
   limit: Math.min(100, Math.max(1, Number(query.limit) || 20)),
   unreadOnly: query.unread === 'true',
+  readOnly: query.read === 'true',
+  severity: query.severity || null,
 });
 
 const getNotifications = async (req, res) => {

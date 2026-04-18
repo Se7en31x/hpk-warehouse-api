@@ -19,16 +19,17 @@ module.exports = {
 
                 if (userId) {
                     socket.join(buildUserRoom(userId));
-                    console.log(`[Socket] ${socket.id} joined room USER:${userId}`);
                 }
 
                 for (const roleRaw of roles) {
                     const role = (roleRaw || "").toString().trim();
                     if (role) {
                         socket.join(buildRoleRoom(role));
-                        console.log(`[Socket] ${socket.id} joined room ROLE:${role}`);
                     }
                 }
+
+                const allRooms = Array.from(socket.rooms);
+                console.log(`[Socket] User ${userId || '(unknown)'} joined rooms:`, allRooms);
             });
 
             socket.on("disconnect", (reason) => {

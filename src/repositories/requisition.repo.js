@@ -163,10 +163,12 @@ const SelectRequisitionById = async (id, tx = prisma) => {
         include: {
             // Join ข้อมูลแผนก
             departments: true, 
-            requisition_item: { 
+            requisition_item: {
                 include: {
                     items: {
                         include: {
+                            categories: { select: { name: true } },
+                            unit: { select: { name: true } },
                             _count: {
                                 select: {
                                     reusable_item_units: {
@@ -189,7 +191,12 @@ const SelectRequisitionById = async (id, tx = prisma) => {
                     }
                 }
             },
-            profiles_requisition_header_requester_idToprofiles: true
+            profiles_requisition_header_requester_idToprofiles: {
+                select: { firstname_th: true, lastname_th: true }
+            },
+            profiles_requisition_header_approver_idToprofiles: {
+                select: { firstname_th: true, lastname_th: true }
+            },
         }
     });
 };

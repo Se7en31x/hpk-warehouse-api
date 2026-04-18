@@ -44,7 +44,6 @@ const emitNotificationRefresh = (recipientIds = []) => {
       io.emit('REFRESH_DATA', 'NOTIFICATIONS');
       return;
     }
-
     ids.forEach((uid) => {
       io.to(buildUserRoom(uid)).emit('REFRESH_DATA', 'NOTIFICATIONS');
     });
@@ -53,11 +52,45 @@ const emitNotificationRefresh = (recipientIds = []) => {
   }
 };
 
+const emitNotificationNew = (recipientIds = [], notifData) => {
+  try {
+    const io = getIO();
+    const ids = Array.from(new Set((recipientIds || []).filter(Boolean)));
+    if (!ids.length) return;
+    ids.forEach((uid) => {
+      io.to(buildUserRoom(uid)).emit('notification:new', notifData);
+    });
+  } catch (e) {
+    // ignore
+  }
+};
+
 const safeCreate = async ({ actorId = null, recipientIds = [], payload }) => {
   if (!recipientIds.length) return;
   const created = await notificationService.createNotificationSafely({ actorId, recipientIds, payload });
   const targets = Array.isArray(created?.recipient_ids) ? created.recipient_ids : recipientIds;
   emitNotificationRefresh(targets);
+
+  if (created?.id && !created?.deduped) {
+    const notifData = {
+      id: created.id,
+      recipient_row_id: null,
+      is_read: false,
+      created_at: new Date().toISOString(),
+      delivered_at: new Date().toISOString(),
+      read_at: null,
+      type: payload.type,
+      severity: payload.severity || 'INFO',
+      title: payload.title,
+      body: payload.body || null,
+      entity_type: payload.entity_type || null,
+      entity_id: payload.entity_id ? String(payload.entity_id) : null,
+      entity_code: payload.entity_code || null,
+      metadata: payload.metadata || null,
+      expires_at: payload.expires_at || null,
+    };
+    emitNotificationNew(targets, notifData);
+  }
 };
 
 const runExpiringLotsJob = async () => {
@@ -77,7 +110,7 @@ const runExpiringLotsJob = async () => {
         severity: 'WARNING',
         title: `ล็อตใกล้หมดอายุ: ${lot.lot_code}`,
         body: `${lot.items?.name || '-'} (${lot.items?.code || '-'}) หมดอายุวันที่ ${expiryDate}`,
-        entity_type: 'LOT',
+        entity_type: 'WAREHOUSE',
         entity_id: lot.id,
         entity_code: lot.lot_code,
         dedupe_key: `LOT_EXPIRING:${lot.id}:${todayKey}`,
@@ -109,7 +142,7 @@ const runLowStockJob = async () => {
         severity: 'WARNING',
         title: `สต็อกต่ำกว่าขั้นต่ำ: ${item.name}`,
         body: `คงเหลือ ${item.current_stock} (ขั้นต่ำ ${item.min_stock})`,
-        entity_type: 'ITEM',
+        entity_type: 'WAREHOUSE',
         entity_id: item.id,
         entity_code: item.code,
         dedupe_key: `LOW_STOCK:${item.id}:${todayKey}`,
@@ -131,38 +164,50 @@ const runOverdueBorrowsJob = async () => {
   const todayKey = dayjs().format('YYYY-MM-DD');
 
   for (const req of borrows) {
-    const recipientIds = Array.from(new Set([
-      ...warehouseRecipients,
-      req.requester_id,
-    ].filter(Boolean)));
-
-    if (!recipientIds.length) continue;
-
     const dueDate = req.due_date ? dayjs(req.due_date).format('YYYY-MM-DD') : '-';
-
-    await safeCreate({
-      recipientIds,
-      payload: {
-        type: 'BORROW_OVERDUE',
-        severity: 'CRITICAL',
-        title: `รายการยืมเกินกำหนด: ${req.doc_no}`,
-        body: `ครบกำหนดคืนวันที่ ${dueDate} (${(() => {
-          const bd = req.borrower_details;
-          if (!bd) return 'ไม่ระบุผู้ยืม';
-          return [bd.lookup_titles?.short_name, bd.firstname, bd.lastname].filter(Boolean).join(' ') || 'ไม่ระบุผู้ยืม';
-        })()})`,
-        entity_type: 'REQUISITION',
-        entity_id: String(req.id),
-        entity_code: req.doc_no,
-        dedupe_key: `BORROW_OVERDUE:${req.id}:${todayKey}`,
-        metadata: {
-          requisition_id: req.id,
-          doc_no: req.doc_no,
-          due_date: req.due_date,
-          requester_id: req.requester_id,
-        },
+    const borrowerName = (() => {
+      const bd = req.borrower_details;
+      if (!bd) return 'ไม่ระบุผู้ยืม';
+      return [bd.lookup_titles?.short_name, bd.firstname, bd.lastname].filter(Boolean).join(' ') || 'ไม่ระบุผู้ยืม';
+    })();
+    const basePayload = {
+      type: 'BORROW_OVERDUE',
+      severity: 'CRITICAL',
+      title: `รายการยืมเกินกำหนด: ${req.doc_no}`,
+      body: `ครบกำหนดคืนวันที่ ${dueDate} (${borrowerName})`,
+      entity_id: String(req.id),
+      entity_code: req.doc_no,
+      metadata: {
+        requisition_id: req.id,
+        doc_no: req.doc_no,
+        due_date: req.due_date,
+        requester_id: req.requester_id,
       },
-    });
+    };
+
+    // Notify warehouse staff
+    if (warehouseRecipients.length) {
+      await safeCreate({
+        recipientIds: warehouseRecipients,
+        payload: {
+          ...basePayload,
+          entity_type: 'WAREHOUSE',
+          dedupe_key: `BORROW_OVERDUE:${req.id}:${todayKey}:WAREHOUSE`,
+        },
+      });
+    }
+
+    // Notify the requester separately
+    if (req.requester_id) {
+      await safeCreate({
+        recipientIds: [req.requester_id],
+        payload: {
+          ...basePayload,
+          entity_type: 'REQUEST_HISTORY',
+          dedupe_key: `BORROW_OVERDUE:${req.id}:${todayKey}:REQUEST_HISTORY`,
+        },
+      });
+    }
   }
 };
 

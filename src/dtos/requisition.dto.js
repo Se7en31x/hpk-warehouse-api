@@ -51,6 +51,12 @@ const mapRequisitionListResponse = (data) => {
             data.profiles_requisition_header_requester_idToprofiles?.firstname_th,
             data.profiles_requisition_header_requester_idToprofiles?.lastname_th,
         ].filter(Boolean).join(' ') || 'N/A',
+        approver: data.profiles_requisition_header_approver_idToprofiles
+            ? [
+                data.profiles_requisition_header_approver_idToprofiles.firstname_th,
+                data.profiles_requisition_header_approver_idToprofiles.lastname_th,
+              ].filter(Boolean).join(' ') || null
+            : null,
         item_count: data._count?.requisition_item || 0,
         note: data.note,
         borrower_details: data.borrower_details || null,
@@ -77,6 +83,8 @@ const mapRequisitionDetailResponse = (data) => {
             name: ri.items?.name || 'Unknown',
             code: ri.items?.code || '',
             image_url: ri.items?.image_url || null,
+            category_name: ri.items?.categories?.name || null,
+            unit_name: ri.items?.unit?.name || null,
             qty: ri.req_qty || 0,
             current_stock: ri.items?.current_stock || 0,
             available_stock:

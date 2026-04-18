@@ -36,26 +36,21 @@ const createNotification = async (data, recipientIds = [], tx = prisma) => {
   });
 };
 
-const selectNotificationFeed = async ({ recipientId, page = 1, limit = 20, unreadOnly = false, readOnly = false, severity = null }, tx = prisma) => {
-  const where = {
-    recipient_id: recipientId,
-    notification: {
-      OR: [
-        { expires_at: null },
-        { expires_at: { gt: new Date() } },
-      ],
-    },
+const selectNotificationFeed = async ({ recipientId, page = 1, limit = 20, unreadOnly = false, readOnly = false, severity = null, entityType = null }, tx = prisma) => {
+  const notifFilter = {
+    OR: [
+      { expires_at: null },
+      { expires_at: { gt: new Date() } },
+    ],
+    ...(severity ? { severity: severity.toUpperCase() } : {}),
+    ...(entityType ? { entity_type: entityType.toUpperCase() } : {}),
   };
 
-  if (unreadOnly) {
-    where.is_read = false;
-  } else if (readOnly) {
-    where.is_read = true;
-  }
-
-  if (severity) {
-    where.notification.severity = severity.toUpperCase();
-  }
+  const where = {
+    recipient_id: recipientId,
+    notification: notifFilter,
+    ...(unreadOnly ? { is_read: false } : readOnly ? { is_read: true } : {}),
+  };
 
   const skip = (page - 1) * limit;
 
@@ -75,7 +70,7 @@ const selectNotificationFeed = async ({ recipientId, page = 1, limit = 20, unrea
   return { items, total };
 };
 
-const countUnread = async (recipientId, tx = prisma) => {
+const countUnread = async (recipientId, entityType = null, tx = prisma) => {
   return tx.notification_recipients.count({
     where: {
       recipient_id: recipientId,
@@ -85,6 +80,7 @@ const countUnread = async (recipientId, tx = prisma) => {
           { expires_at: null },
           { expires_at: { gt: new Date() } },
         ],
+        ...(entityType ? { entity_type: entityType.toUpperCase() } : {}),
       },
     },
   });
@@ -123,32 +119,39 @@ const selectRecipientIdsByRoles = async (roles = [], tx = prisma) => {
   );
   if (!normalizedRoles.length) return [];
 
-  console.log('[selectRecipientIdsByRoles] querying roles by role_name_en:', normalizedRoles);
-
-  // Step 1: resolve role_name_en → role IDs
+  // Strategy 1: profiles.role_id → roles.role_name_en
   const roleRows = await tx.roles.findMany({
     where: { role_name_en: { in: normalizedRoles } },
-    select: { id: true, role_name_en: true },
-  });
-
-  console.log('[selectRecipientIdsByRoles] matched roles:', roleRows);
-
-  if (!roleRows.length) return [];
-
-  const roleIds = roleRows.map((r) => r.id);
-
-  // Step 2: find active profiles that carry one of those role IDs
-  const rows = await tx.profiles.findMany({
-    where: {
-      deleted_at: null,
-      role_id: { in: roleIds },
-    },
     select: { id: true },
   });
+  const roleIds = roleRows.map((r) => r.id);
 
-  console.log('[selectRecipientIdsByRoles] resolved profile IDs:', rows.map((r) => r.id));
+  const profileRows = roleIds.length
+    ? await tx.profiles.findMany({
+        where: { deleted_at: null, role_id: { in: roleIds } },
+        select: { id: true },
+      })
+    : [];
 
-  return rows.map((r) => r.id);
+  // Strategy 2: users.raw_app_meta_data — handles both formats:
+  //   { role: "warehouse_staff" }  and  { role: { name: "warehouse_staff" } }
+  const placeholders = normalizedRoles.map((_, i) => `$${i + 1}`).join(', ');
+  const rawRows = await prisma.$queryRawUnsafe(
+    `SELECT id::text
+     FROM auth.users
+     WHERE deleted_at IS NULL
+       AND (
+         raw_app_meta_data->>'role' IN (${placeholders})
+         OR raw_app_meta_data->'role'->>'name' IN (${placeholders})
+       )`,
+    ...normalizedRoles, ...normalizedRoles
+  );
+
+  const fromProfiles = profileRows.map((r) => r.id);
+  const fromRaw = (rawRows || []).map((r) => r.id);
+
+  // Deduplicate and return
+  return Array.from(new Set([...fromProfiles, ...fromRaw]));
 };
 
 const selectExpiringLots = async ({ daysAhead = 7, limit = 200 }, tx = prisma) => {

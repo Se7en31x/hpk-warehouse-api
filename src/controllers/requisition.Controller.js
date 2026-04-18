@@ -1,7 +1,7 @@
 const requisitionService = require('../services/requisition.Service');
 const notificationService = require('../services/notification.service');
 const util = require('../utils/response');
-const { getIO, buildUserRoom } = require('../utils/socket');
+const { getIO, buildUserRoom, buildRoleRoom } = require('../utils/socket');
 const { isAdmin, getUserDepartmentIds } = require('../utils/userAccess');
 
 /**
@@ -43,31 +43,92 @@ const emitNotificationRefresh = (recipientIds = []) => {
     try {
         const io = getIO();
         const ids = Array.from(new Set((recipientIds || []).filter(Boolean)));
-
         if (!ids.length) {
             io.emit('REFRESH_DATA', 'NOTIFICATIONS');
             return;
         }
-
         ids.forEach((uid) => io.to(buildUserRoom(uid)).emit('REFRESH_DATA', 'NOTIFICATIONS'));
     } catch (e) {
         // Ignore socket refresh failures
     }
 };
 
-const safeCreateNotification = async ({ actorId, recipientIds = [], payload }) => {
+const emitNotificationNew = (recipientIds = [], roleNames = [], notifData) => {
+    try {
+        const io = getIO();
+        console.log('🚀 Sending Socket Notification to Warehouse Staff:', notifData.title);
+
+        // Emit to individual USER rooms
+        const ids = Array.from(new Set((recipientIds || []).filter(Boolean)));
+        ids.forEach((uid) => io.to(buildUserRoom(uid)).emit('notification:new', notifData));
+
+        // Also emit to ROLE rooms so users whose IDs weren't resolved still receive it
+        const roles = Array.from(new Set((roleNames || []).filter(Boolean)));
+        roles.forEach((role) => {
+            console.log(`[Socket] Emitting notification:new to ROLE:${role}`);
+            io.to(buildRoleRoom(role)).emit('notification:new', notifData);
+        });
+    } catch (e) {
+        console.error('[Socket] emitNotificationNew failed:', e.message);
+    }
+};
+
+const safeCreateNotification = async ({ actorId, recipientIds = [], roleNames = [], payload }) => {
     const ids = Array.from(new Set((recipientIds || []).filter(Boolean)));
-    if (!ids.length) return;
 
     try {
-        await notificationService.createNotificationSafely({
-            actorId,
-            recipientIds: ids,
-            payload,
-        });
-        emitNotificationRefresh(ids);
+        // Still create the DB record (requires at least one recipient ID)
+        if (ids.length) {
+            const created = await notificationService.createNotificationSafely({
+                actorId,
+                recipientIds: ids,
+                payload,
+            });
+            emitNotificationRefresh(ids);
+
+            if (created?.id && !created?.deduped) {
+                const notifData = {
+                    id: created.id,
+                    recipient_row_id: null,
+                    is_read: false,
+                    created_at: new Date().toISOString(),
+                    delivered_at: new Date().toISOString(),
+                    read_at: null,
+                    type: payload.type,
+                    severity: payload.severity || 'INFO',
+                    title: payload.title,
+                    body: payload.body || null,
+                    entity_type: payload.entity_type || null,
+                    entity_id: payload.entity_id ? String(payload.entity_id) : null,
+                    entity_code: payload.entity_code || null,
+                    metadata: payload.metadata || null,
+                    expires_at: payload.expires_at || null,
+                };
+                emitNotificationNew(ids, roleNames, notifData);
+            }
+        } else if (roleNames?.length) {
+            // No resolved IDs but we have role targets — emit socket only (no DB record)
+            const notifData = {
+                id: null,
+                recipient_row_id: null,
+                is_read: false,
+                created_at: new Date().toISOString(),
+                delivered_at: new Date().toISOString(),
+                read_at: null,
+                type: payload.type,
+                severity: payload.severity || 'INFO',
+                title: payload.title,
+                body: payload.body || null,
+                entity_type: payload.entity_type || null,
+                entity_id: payload.entity_id ? String(payload.entity_id) : null,
+                entity_code: payload.entity_code || null,
+                metadata: payload.metadata || null,
+                expires_at: payload.expires_at || null,
+            };
+            emitNotificationNew([], roleNames, notifData);
+        }
     } catch (e) {
-        // Ignore notification creation failures
+        console.error('[Notification] safeCreateNotification failed:', e.message);
     }
 };
 
@@ -127,16 +188,22 @@ const createRequisition = async (req, res) => {
 
         const created = await requisitionService.createRequisition(data, req.user || null);
 
-        const warehouseRecipients = await getWarehouseRecipientIds();
+        const actorId = req.user?.sub || null;
+        const warehouseRoles = parseRoles(process.env.ROLE_WAREHOUSE_GROUP || '');
+        const allWarehouseRecipients = await getWarehouseRecipientIds();
+        // All warehouse staff are recipients — do not exclude the actor, they may be an
+        // admin testing from the requester side but still needs the warehouse bell to update.
+        const warehouseRecipients = allWarehouseRecipients;
         await safeCreateNotification({
-            actorId: req.user?.sub || null,
+            actorId,
             recipientIds: warehouseRecipients,
+            roleNames: warehouseRoles,
             payload: {
                 type: 'REQUISITION_CREATED',
                 severity: 'INFO',
                 title: `มีคำขอใหม่: ${created?.doc_no || '-'}`,
-                body: `ประเภท ${created?.type || '-'} จากผู้ใช้ ${created?.requester || '-'}`,
-                entity_type: 'REQUISITION',
+                body: `จากแผนก ${created?.department_name || '-'} (${created?.type === 'BORROW' ? 'ยืม' : 'เบิก'})`,
+                entity_type: 'WAREHOUSE',
                 entity_id: String(created?.id || ''),
                 entity_code: created?.doc_no || null,
                 metadata: {
@@ -207,7 +274,7 @@ const approveRequisition = async (req, res) => {
                     severity: 'INFO',
                     title,
                     body: result?.type === REQ_TYPES.WITHDRAW ? 'คลังอนุมัติแล้ว กรุณารอรับพัสดุ' : 'คลังอนุมัติการยืมแล้ว',
-                    entity_type: 'REQUISITION',
+                    entity_type: 'REQUEST_HISTORY',
                     entity_id: String(result?.id || id),
                     entity_code: result?.doc_no || null,
                 },
@@ -247,7 +314,7 @@ const completeDelivery = async (req, res) => {
                     severity: 'INFO',
                     title: `นำส่งเรียบร้อย: ${result?.doc_no || '-'}`,
                     body: 'คลังนำส่งพัสดุเรียบร้อยแล้ว',
-                    entity_type: 'REQUISITION',
+                    entity_type: 'REQUEST_HISTORY',
                     entity_id: String(result?.id || id),
                     entity_code: result?.doc_no || null,
                 },
@@ -282,7 +349,7 @@ const rejectRequisition = async (req, res) => {
                     severity: 'WARNING',
                     title: `คำขอถูกปฏิเสธ: ${result?.doc_no || '-'}`,
                     body: reason ? `เหตุผล: ${reason}` : 'กรุณาตรวจสอบรายละเอียดกับเจ้าหน้าที่คลัง',
-                    entity_type: 'REQUISITION',
+                    entity_type: 'REQUEST_HISTORY',
                     entity_id: String(result?.id || id),
                     entity_code: result?.doc_no || null,
                 },
@@ -309,18 +376,23 @@ const cancelRequisition = async (req, res) => {
 
         const result = await requisitionService.cancelRequisition(id, req.user || null);
 
-        const warehouseRecipients = await getWarehouseRecipientIds();
+        const cancelActorId = req.user?.sub || null;
+        const cancelRoles = parseRoles(process.env.ROLE_WAREHOUSE_GROUP || '');
+        const allWarehouseForCancel = await getWarehouseRecipientIds();
+        // Skip the person who cancelled — they already know
+        const cancelRecipients = allWarehouseForCancel.filter((uid) => uid !== cancelActorId);
         await safeCreateNotification({
-            actorId: req.user?.sub || null,
-            recipientIds: warehouseRecipients,
+            actorId: cancelActorId,
+            recipientIds: cancelRecipients,
+            roleNames: cancelRoles,
             payload: {
                 type: 'REQUISITION_CANCELLED',
                 severity: 'INFO',
-                title: `คำขอถูกยกเลิก: ${result?.id || id}`,
+                title: `คำขอถูกยกเลิก: ${result?.doc_no || result?.id || id}`,
                 body: 'รายการคำขอถูกยกเลิกโดยผู้ใช้งาน',
-                entity_type: 'REQUISITION',
+                entity_type: 'WAREHOUSE',
                 entity_id: String(result?.id || id),
-                entity_code: null,
+                entity_code: result?.doc_no || null,
             },
         });
 
@@ -384,7 +456,7 @@ const processReturn = async (req, res) => {
                     severity: 'INFO',
                     title: `อัปเดตการคืน: ${result?.doc_no || '-'}`,
                     body: result?.status === 'COMPLETED' ? 'รับคืนครบและปิดงานแล้ว' : 'มีการบันทึกรับคืนบางส่วน',
-                    entity_type: 'REQUISITION',
+                    entity_type: 'REQUEST_HISTORY',
                     entity_id: String(result?.id || id),
                     entity_code: result?.doc_no || null,
                 },

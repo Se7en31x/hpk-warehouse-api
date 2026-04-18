@@ -5,11 +5,11 @@ const parsePage = (v, fallback) => {
   return Number.isInteger(n) && n > 0 ? n : fallback;
 };
 
-const getFeed = async ({ recipientId, page = 1, limit = 20, unreadOnly = false, readOnly = false, severity = null }) => {
+const getFeed = async ({ recipientId, page = 1, limit = 20, unreadOnly = false, readOnly = false, severity = null, entityType = null }) => {
   if (!recipientId) throw new Error('recipient_id is required');
 
   const safePage = parsePage(page, 1);
-  const safeLimit = Math.min(100, Math.max(1, parsePage(limit, 20)));
+  const safeLimit = Math.min(500, Math.max(1, parsePage(limit, 20)));
 
   const { items, total } = await repo.selectNotificationFeed({
     recipientId,
@@ -18,6 +18,7 @@ const getFeed = async ({ recipientId, page = 1, limit = 20, unreadOnly = false, 
     unreadOnly: Boolean(unreadOnly),
     readOnly: Boolean(readOnly),
     severity: severity || null,
+    entityType: entityType || null,
   });
 
   const totalPages = Math.max(1, Math.ceil(total / safeLimit));
@@ -49,9 +50,9 @@ const getFeed = async ({ recipientId, page = 1, limit = 20, unreadOnly = false, 
   };
 };
 
-const getUnreadCount = async (recipientId) => {
+const getUnreadCount = async (recipientId, entityType = null) => {
   if (!recipientId) throw new Error('recipient_id is required');
-  const unread = await repo.countUnread(recipientId);
+  const unread = await repo.countUnread(recipientId, entityType || null);
   return { unread };
 };
 
@@ -169,7 +170,7 @@ const notifyNewItemLowStock = async (item) => {
       severity: 'CRITICAL',
       title: 'พัสดุต่ำกว่าจุดวิกฤต (ใหม่)',
       body: `${item.name} ถูกเพิ่มเข้าระบบแล้ว แต่ยังไม่มีจำนวนคงเหลือ (จำนวนขั้นต่ำ: ${item.min_stock})`,
-      entity_type: 'ITEM',
+      entity_type: 'WAREHOUSE',
       entity_id: String(item.id),
       entity_code: item.code,
       dedupe_key: `LOW_STOCK_NEW_ITEM:${item.id}`,

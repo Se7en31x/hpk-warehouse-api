@@ -33,6 +33,7 @@ const parseListQuery = (query) => ({
   unreadOnly: query.unread === 'true',
   readOnly: query.read === 'true',
   severity: query.severity || null,
+  entityType: query.entity_type || null,
 });
 
 const getNotifications = async (req, res) => {
@@ -48,7 +49,8 @@ const getNotifications = async (req, res) => {
 const getUnreadCount = async (req, res) => {
   try {
     const recipientId = resolveRecipientId(req);
-    const result = await svc.getUnreadCount(recipientId);
+    const entityType = req.query?.entity_type || null;
+    const result = await svc.getUnreadCount(recipientId, entityType);
     return util.sendResponse(res, 200, 'get unread notifications success', result);
   } catch (e) {
     return util.sendResponse(res, 400, e.message);

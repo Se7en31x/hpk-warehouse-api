@@ -62,14 +62,17 @@ const buildOperatorMap = async (rows) => {
  * ───────────────────────────────────────────────────────────────────────────*/
 
 const mapMovement = (row, operatorMap = new Map()) => ({
-    id:            row.id,
-    type:          row.type,
-    quantity:      row.quantity,
-    note:          row.note          ?? null,
-    created_by:    row.created_by    ?? null,        // kept for backwards-compat
-    created_by_id: row.created_by_id ?? null,
-    operator_name: operatorMap.get(row.created_by_id) ?? row.created_by ?? null,
-    created_at:    row.created_at,
+    id:                row.id,
+    type:              row.type,
+    quantity:          row.quantity,
+    balance_before:    row.balance_before ?? null,
+    balance_after:     row.balance_after  ?? null,
+    remaining_balance: row.balance_after  ?? null,   // alias kept for frontend compat
+    note:              row.note          ?? null,
+    created_by:        row.created_by    ?? null,
+    created_by_id:     row.created_by_id ?? null,
+    operator_name:     operatorMap.get(row.created_by_id) ?? row.created_by ?? null,
+    created_at:        row.created_at,
     item: row.items
         ? {
               id:        row.items.id,
@@ -120,6 +123,7 @@ const getMovementById = async (id) => {
 
     const operatorMap = await buildOperatorMap([row]);
     return mapMovement(row, operatorMap);
+
 };
 
 module.exports = {

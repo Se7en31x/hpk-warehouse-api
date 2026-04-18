@@ -38,6 +38,10 @@ const getDistrictsByProvince = async (provinceId) => {
  * Fetch subdistricts for a given district, including zip_code.
  * Returns: [{ id, name, zip_code }]
  *
+ * zip_code is a manually maintained VARCHAR(5) column on lookup_subdistrict.
+ * It is NOT in the Prisma schema (added outside migrations), so we must use
+ * $queryRawUnsafe — do NOT switch this to a Prisma findMany call.
+ *
  * @param {string} districtId  4-char district code (e.g. "1001")
  */
 const getSubdistrictsByDistrict = async (districtId) => {
@@ -57,8 +61,16 @@ const getSubdistrictsByDistrict = async (districtId) => {
     return rows;
 };
 
+const getTitles = async () => {
+    return prisma.lookup_titles.findMany({
+        select: { title_code: true, short_name: true, name: true, is_common: true },
+        orderBy: [{ is_common: 'desc' }, { title_code: 'asc' }],
+    });
+};
+
 module.exports = {
     getProvinces,
     getDistrictsByProvince,
     getSubdistrictsByDistrict,
+    getTitles,
 };

@@ -146,7 +146,11 @@ const runOverdueBorrowsJob = async () => {
         type: 'BORROW_OVERDUE',
         severity: 'CRITICAL',
         title: `รายการยืมเกินกำหนด: ${req.doc_no}`,
-        body: `ครบกำหนดคืนวันที่ ${dueDate} (${req.borrower_details?.fullname || 'ไม่ระบุผู้ยืม'})`,
+        body: `ครบกำหนดคืนวันที่ ${dueDate} (${(() => {
+          const bd = req.borrower_details;
+          if (!bd) return 'ไม่ระบุผู้ยืม';
+          return [bd.lookup_titles?.short_name, bd.firstname, bd.lastname].filter(Boolean).join(' ') || 'ไม่ระบุผู้ยืม';
+        })()})`,
         entity_type: 'REQUISITION',
         entity_id: String(req.id),
         entity_code: req.doc_no,

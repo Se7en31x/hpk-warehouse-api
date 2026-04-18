@@ -53,7 +53,8 @@ const createSupplier = async (req, res) => {
 
 		return util.sendMutationResponse(res, 201, 'Create supplier success', newSupplier?.id || null);
 	} catch (error) {
-		return util.sendResponse(res, 500, "failed to create supplier");
+		console.error('[createSupplier]', error);
+		return util.sendResponse(res, 500, error?.message || "failed to create supplier");
 	}
 }
 
@@ -70,7 +71,8 @@ const updateSupplier = async (req, res) => {
 
 		return util.sendMutationResponse(res, 200, 'Update supplier success', updated?.id || id);
 	} catch (error) {
-		return util.sendResponse(res, 500, "failed to update supplier");
+		console.error('[updateSupplier]', error);
+		return util.sendResponse(res, 500, error?.message || "failed to update supplier");
 	}
 }
 

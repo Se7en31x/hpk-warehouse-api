@@ -46,8 +46,23 @@ const getSubdistricts = async (req, res) => {
     }
 };
 
+/**
+ * GET /v1/lookup/titles
+ * Returns all title prefixes as [{ title_code, short_name, name }]
+ */
+const getTitles = async (req, res) => {
+    try {
+        const data = await lookupService.getTitles();
+        return util.sendResponse(res, 200, 'get titles success', data);
+    } catch (err) {
+        const status = err.status || 500;
+        return util.sendResponse(res, status, err.message || 'get titles failed');
+    }
+};
+
 module.exports = {
     getProvinces,
     getDistricts,
     getSubdistricts,
+    getTitles,
 };

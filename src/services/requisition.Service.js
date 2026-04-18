@@ -327,6 +327,7 @@ const approveRequisition = async (headerId, itemsToIssue, userSession) => {
                     );
                 }
 
+                const reusableBalBefore = await stockMovementRepo.fetchItemCurrentStock(currentReqItem.item_id, tx);
                 await stockMovementRepo.createStockMovement({
                     item_id: currentReqItem.item_id,
                     quantity: qtyNeeded,
@@ -334,6 +335,8 @@ const approveRequisition = async (headerId, itemsToIssue, userSession) => {
                     note: `เบิกจ่ายพัสดุใช้ซ้ำตามใบงาน: ${header.doc_no}`,
                     created_by: approvedByName,
                     created_by_id: approvedById,
+                    balance_before: reusableBalBefore,
+                    balance_after: reusableBalBefore - qtyNeeded,
                 }, tx);
 
                 await requisitionRepo.updateRequisitionItem(rItemId, {
@@ -348,6 +351,9 @@ const approveRequisition = async (headerId, itemsToIssue, userSession) => {
             const lots = await requisitionRepo.getItemLots(currentReqItem.item_id, tx);
             const lotMap = new Map(lots.map(l => [l.id.toString(), l]));
             let remaining = qtyNeeded;
+
+            // Running balance — read once before any lot is decremented
+            let runningBal = await stockMovementRepo.fetchItemCurrentStock(currentReqItem.item_id, tx);
 
             if (explicitLots && typeof explicitLots === 'object') {
                 for (const [lotIdString, qtyRequested] of Object.entries(explicitLots)) {
@@ -374,8 +380,11 @@ const approveRequisition = async (headerId, itemsToIssue, userSession) => {
                         type: "OUT",
                         note: `เบิกจ่ายตามใบงาน (กำหนด Lot): ${header.doc_no}`,
                         created_by: approvedByName,
-                        created_by_id: approvedById
+                        created_by_id: approvedById,
+                        balance_before: runningBal,
+                        balance_after: runningBal - take,
                     }, tx);
+                    runningBal -= take;
                 }
             } else {
                 for (const lot of lots) {
@@ -399,8 +408,11 @@ const approveRequisition = async (headerId, itemsToIssue, userSession) => {
                         type: "OUT",
                         note: `เบิกจ่ายตามใบงาน: ${header.doc_no}`,
                         created_by: approvedByName,
-                        created_by_id: approvedById
+                        created_by_id: approvedById,
+                        balance_before: runningBal,
+                        balance_after: runningBal - take,
                     }, tx);
+                    runningBal -= take;
                 }
             }
 
@@ -570,6 +582,7 @@ const processReturn = async (headerId, returnItems, userSession) => {
                     }, tx);
                 }
 
+                const retReusableBal = await stockMovementRepo.fetchItemCurrentStock(currentReqItem.item_id, tx);
                 await stockMovementRepo.createStockMovement({
                     item_id: currentReqItem.item_id,
                     quantity: qtyToReturn,
@@ -577,6 +590,8 @@ const processReturn = async (headerId, returnItems, userSession) => {
                     note: `รับคืนพัสดุใช้ซ้ำจากใบ: ${header.doc_no}`,
                     created_by: receivedByName,
                     created_by_id: receivedById,
+                    balance_before: retReusableBal,
+                    balance_after: retReusableBal + qtyToReturn,
                 }, tx);
 
                 continue;
@@ -585,6 +600,9 @@ const processReturn = async (headerId, returnItems, userSession) => {
             if (condition === 'GOOD') {
                 const allocations = await requisitionRepo.SelectAllocationsForReqItem(rItemId, tx);
                 let remaining = qtyToReturn;
+
+                // Running balance — read once before any lot is restored
+                let retRunningBal = await stockMovementRepo.fetchItemCurrentStock(currentReqItem.item_id, tx);
 
                 for (const alloc of allocations) {
                     if (remaining <= 0) break;
@@ -601,7 +619,10 @@ const processReturn = async (headerId, returnItems, userSession) => {
                         note: `รับคืนจากใบ: ${header.doc_no}`,
                         created_by: receivedByName,
                         created_by_id: receivedById,
+                        balance_before: retRunningBal,
+                        balance_after: retRunningBal + restore,
                     }, tx);
+                    retRunningBal += restore;
                 }
             }
         }

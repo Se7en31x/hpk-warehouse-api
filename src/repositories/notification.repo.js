@@ -117,11 +117,16 @@ const selectRecipientIdsByRoles = async (roles = [], tx = prisma) => {
   );
   if (!normalizedRoles.length) return [];
 
-  // Step 1: resolve role codes → role IDs (profiles.role_id is Int, roles.code is the string key)
+  console.log('[selectRecipientIdsByRoles] querying roles by role_name_en:', normalizedRoles);
+
+  // Step 1: resolve role_name_en → role IDs
   const roleRows = await tx.roles.findMany({
-    where: { code: { in: normalizedRoles } },
-    select: { id: true },
+    where: { role_name_en: { in: normalizedRoles } },
+    select: { id: true, role_name_en: true },
   });
+
+  console.log('[selectRecipientIdsByRoles] matched roles:', roleRows);
+
   if (!roleRows.length) return [];
 
   const roleIds = roleRows.map((r) => r.id);
@@ -134,6 +139,8 @@ const selectRecipientIdsByRoles = async (roles = [], tx = prisma) => {
     },
     select: { id: true },
   });
+
+  console.log('[selectRecipientIdsByRoles] resolved profile IDs:', rows.map((r) => r.id));
 
   return rows.map((r) => r.id);
 };
@@ -219,8 +226,11 @@ const selectOverdueBorrows = async ({ limit = 200 }, tx = prisma) => {
       requester_id: true,
       borrower_details: {
         select: {
-          fullname: true,
+          title_code: true,
+          firstname: true,
+          lastname: true,
           phone: true,
+          lookup_titles: { select: { short_name: true } },
         },
       },
     },

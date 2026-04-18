@@ -50,7 +50,7 @@ const createLotUpsertDTO = (item = {}) => {
     };
 };
 
-const createStockMovementDTO = (item = {}, docNo = '', createdByName = 'SYSTEM', createdById = null, lotId = null) => ({
+const createStockMovementDTO = (item = {}, docNo = '', createdByName = 'SYSTEM', createdById = null, lotId = null, balanceBefore = 0, balanceAfter = 0) => ({
     item_id: item.item_id,
     lot_id: lotId,
     quantity: Number(item.qty),
@@ -58,9 +58,11 @@ const createStockMovementDTO = (item = {}, docNo = '', createdByName = 'SYSTEM',
     note: `Receive IN: ${docNo}`,
     created_by: createdByName,
     created_by_id: createdById ? createdById.toString().trim() : null,
+    balance_before: balanceBefore,
+    balance_after: balanceAfter,
 });
 
-const createCancelStockMovementDTO = (item = {}, docNo = '', createdByName = 'SYSTEM', createdById = null, lotId = null) => ({
+const createCancelStockMovementDTO = (item = {}, docNo = '', createdByName = 'SYSTEM', createdById = null, lotId = null, balanceBefore = 0, balanceAfter = 0) => ({
     item_id: item.item_id,
     lot_id: lotId,
     quantity: Number(item.qty),
@@ -68,6 +70,8 @@ const createCancelStockMovementDTO = (item = {}, docNo = '', createdByName = 'SY
     note: `Cancel Receive: ${docNo}`,
     created_by: createdByName,
     created_by_id: createdById ? createdById.toString().trim() : null,
+    balance_before: balanceBefore,
+    balance_after: balanceAfter,
 });
 
 const listReceivesQueryDTO = (query = {}) => ({

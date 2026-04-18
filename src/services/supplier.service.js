@@ -31,11 +31,10 @@ const updateSupplier = async (id, data) => {
 	if (!existing) throw new Error('Supplier id not found');
 
 	const payload = {};
-	if (Object.prototype.hasOwnProperty.call(data, 'name')) payload.name = data.name;
-	if (Object.prototype.hasOwnProperty.call(data, 'contact')) payload.contact = data.contact;
-	if (Object.prototype.hasOwnProperty.call(data, 'address')) payload.address = data.address;
-	if (Object.prototype.hasOwnProperty.call(data, 'phone')) payload.phone = data.phone;
-	if (Object.prototype.hasOwnProperty.call(data, 'tax_id')) payload.tax_id = data.tax_id;
+	const fields = ['name', 'contact', 'address', 'phone', 'contact_phone', 'tax_id', 'email', 'bank_name', 'bank_account_number', 'bank_account_name'];
+	for (const field of fields) {
+		if (Object.prototype.hasOwnProperty.call(data, field)) payload[field] = data[field];
+	}
 
 	const updated = await supplierRepo.updateSupplier(id, payload);
 	return updated;

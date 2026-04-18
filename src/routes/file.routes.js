@@ -5,6 +5,6 @@ const { upload, uploadDocument } = require('../middleware/upload');
 
 router.patch('/items/:id/image',          upload.single('image'),    fileController.updateItemImage);
 router.delete('/items/:id/image',                                    fileController.removeItemImage);
-router.patch('/borrowers/:id/document',   uploadDocument.single('document'), fileController.uploadBorrowerDocument);
+router.patch('/borrowers/:id/document',   uploadDocument.array('document', 5), fileController.uploadBorrowerDocument);
 
 module.exports = router;

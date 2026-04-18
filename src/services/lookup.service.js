@@ -71,8 +71,18 @@ async function getSubdistrictsByDistrict(districtId) {
     return data;
 }
 
+async function getTitles() {
+    const cacheKey = 'titles';
+    const cached = fromCache(cacheKey);
+    if (cached) return cached;
+    const data = await repo.getTitles();
+    toCache(cacheKey, data);
+    return data;
+}
+
 module.exports = {
     getProvinces,
     getDistrictsByProvince,
     getSubdistrictsByDistrict,
+    getTitles,
 };

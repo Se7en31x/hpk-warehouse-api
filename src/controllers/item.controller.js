@@ -1,4 +1,6 @@
 const itemService = require('../services/item.service')
+const notificationService = require('../services/notification.service')
+const { buildUserRoom } = require('../utils/socket')
 const util = require('../utils/response');
 
 const parseListQuery = (query) => {
@@ -69,6 +71,31 @@ const createItem = async (req, res) => {
 
         const newItem = await itemService.createItem(data, req.file || null)
         req.io.emit('REFRESH_DATA', 'ITEMS');
+
+        try {
+            const notifResult = await notificationService.notifyNewItemLowStock(newItem);
+            console.log('[createItem] notifyNewItemLowStock result:', JSON.stringify(notifResult));
+
+            if (notifResult === null) {
+                console.warn('[createItem] notifyNewItemLowStock returned null — no recipients or condition not met. No socket emit.');
+            } else if (notifResult.deduped) {
+                console.log('[createItem] notification was deduped — skipping socket emit');
+            } else {
+                const recipientIds = notifResult.recipient_ids || [];
+                if (recipientIds.length) {
+                    recipientIds.forEach((uid) => {
+                        const room = buildUserRoom(uid);
+                        console.log('[createItem] emitting REFRESH_DATA:NOTIFICATIONS to room:', room);
+                        req.io.to(room).emit('REFRESH_DATA', 'NOTIFICATIONS');
+                    });
+                } else {
+                    console.log('[createItem] no specific recipients — broadcasting REFRESH_DATA:NOTIFICATIONS to all');
+                    req.io.emit('REFRESH_DATA', 'NOTIFICATIONS');
+                }
+            }
+        } catch (notifErr) {
+            console.error('[createItem] notifyNewItemLowStock failed:', notifErr.message);
+        }
 
         return util.sendMutationResponse(res, 201, "create item success", newItem?.id || null)
     } catch (error) {

@@ -175,16 +175,18 @@ model item_lots {
 }
 
 model stocks_movement {
-  id            Int       @id(map: "stock_movement_pkey") @default(autoincrement())
-  item_id       String?   @db.Uuid
-  lot_id        String?   @db.Uuid
-  quantity      Int?      @default(0)
-  type          String    @db.VarChar(50)
-  note          String?
-  created_by    String?
-  created_by_id String?   @db.Uuid
-  created_at    DateTime? @default(now()) @db.Timestamptz(6)
-  items         items?    @relation(fields: [item_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "stock_movement_item_fk")
+  id             Int       @id(map: "stock_movement_pkey") @default(autoincrement())
+  item_id        String?   @db.Uuid
+  lot_id         String?   @db.Uuid
+  quantity       Int?      @default(0)
+  type           String    @db.VarChar(50)
+  note           String?
+  created_by     String?
+  created_by_id  String?   @db.Uuid
+  created_at     DateTime? @default(now()) @db.Timestamptz(6)
+  balance_before Int?      @default(0)
+  balance_after  Int?      @default(0)
+  items          items?    @relation(fields: [item_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "stock_movement_item_fk")
 
   @@schema("inventory")
 }
@@ -272,17 +274,22 @@ model reusable_return_request_items {
 }
 
 model supplier {
-  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name           String
-  contact        String?
-  address        String?
-  phone          String?
-  tax_id         String?
-  active         Boolean?         @default(true)
-  created_at     DateTime?        @default(now()) @db.Timestamptz(6)
-  updated_at     DateTime?        @default(now()) @db.Timestamptz(6)
-  deleted_at     DateTime?        @db.Timestamptz(6)
-  receive_header receive_header[]
+  id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                String
+  contact             String?
+  address             String?
+  phone               String?
+  tax_id              String?
+  active              Boolean?         @default(true)
+  created_at          DateTime?        @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime?        @default(now()) @db.Timestamptz(6)
+  deleted_at          DateTime?        @db.Timestamptz(6)
+  bank_account_number String?          @db.VarChar(50)
+  bank_account_name   String?          @db.VarChar(50)
+  bank_name           String?          @db.VarChar(100)
+  email               String?          @db.VarChar(100)
+  contact_phone       String?          @db.VarChar
+  receive_header      receive_header[]
 
   @@schema("public")
 }
@@ -352,9 +359,11 @@ model lookup_occupations {
 }
 
 model lookup_titles {
-  title_code String  @id(map: "PK_7d56771b6d78cbe8690a44481cc") @db.VarChar(3)
-  short_name String? @db.VarChar(50)
-  name       String  @db.VarChar(100)
+  title_code       String             @id(map: "PK_7d56771b6d78cbe8690a44481cc") @db.VarChar(3)
+  short_name       String?            @db.VarChar(50)
+  name             String             @db.VarChar(100)
+  is_common        Boolean?           @default(false)
+  borrower_details borrower_details[]
 
   @@schema("public")
 }
@@ -929,7 +938,6 @@ model webauthn_credentials {
 
 model borrower_details {
   id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  fullname           String               @db.VarChar(255)
   address            String
   subdistrict        String               @db.VarChar(100)
   district           String               @db.VarChar(100)
@@ -941,9 +949,13 @@ model borrower_details {
   notes              String?
   created_at         DateTime?            @default(now()) @db.Timestamptz(6)
   updated_at         DateTime?            @default(now()) @db.Timestamptz(6)
+  id_card            String?              @db.VarChar(20)
+  firstname          String?              @db.VarChar(255)
+  lastname           String?              @db.VarChar(255)
+  title_code         String?              @db.VarChar
+  lookup_titles      lookup_titles?       @relation(fields: [title_code], references: [title_code], onDelete: NoAction, onUpdate: NoAction, map: "fk_title_code")
   requisition_header requisition_header[]
 
-  @@index([fullname], map: "idx_borrower_fullname")
   @@index([phone], map: "idx_borrower_phone")
   @@schema("inventory")
 }
@@ -1128,7 +1140,6 @@ model lookup_subdistrict {
   zip_code        String?         @db.VarChar(10)
   lookup_province lookup_province @relation(fields: [provcode], references: [province], onDelete: NoAction, onUpdate: NoAction, map: "FK_45ca7926d0b1ac05cb9c5385e32")
 
-  @@index([zip_code], map: "idx_lookup_subdistrict_zip")
   @@schema("public")
 }
 

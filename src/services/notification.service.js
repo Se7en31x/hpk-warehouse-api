@@ -129,6 +129,60 @@ const createNotificationSafely = async ({ actorId, recipientIds = [], payload })
   }
 };
 
+const notifyNewItemLowStock = async (item) => {
+  const minStock = Number(item?.min_stock ?? 0);
+  const currentStock = Number(item?.current_stock ?? 0);
+
+  console.log('[notifyNewItemLowStock] triggered', {
+    item_id: item?.id,
+    item_name: item?.name,
+    item_code: item?.code,
+    min_stock: minStock,
+    current_stock: currentStock,
+  });
+
+  if (!item || !(minStock > 0 && currentStock <= minStock)) {
+    console.log('[notifyNewItemLowStock] skipped — condition not met (min_stock=0 or stock above threshold)');
+    return null;
+  }
+
+  const warehouseRoles = (process.env.ROLE_WAREHOUSE_GROUP || '')
+    .split(',').map((r) => r.trim()).filter(Boolean);
+
+  console.log('[notifyNewItemLowStock] looking up roles:', warehouseRoles);
+
+  const recipientIds = await repo.selectRecipientIdsByRoles(warehouseRoles);
+
+  console.log('[notifyNewItemLowStock] resolved recipientIds:', recipientIds);
+
+  if (!recipientIds.length) {
+    console.warn('[notifyNewItemLowStock] no recipients found — check ROLE_WAREHOUSE_GROUP in .env matches role codes in the DB');
+    return null;
+  }
+
+  const result = await createNotificationSafely({
+    recipientIds,
+    payload: {
+      type: 'LOW_STOCK',
+      severity: 'CRITICAL',
+      title: 'พัสดุต่ำกว่าจุดวิกฤต (ใหม่)',
+      body: `${item.name} ถูกเพิ่มเข้าระบบแล้ว แต่ยังไม่มีจำนวนคงเหลือ (จำนวนขั้นต่ำ: ${item.min_stock})`,
+      entity_type: 'ITEM',
+      entity_id: String(item.id),
+      entity_code: item.code,
+      dedupe_key: `LOW_STOCK_NEW_ITEM:${item.id}`,
+      metadata: {
+        item_id: item.id,
+        current_stock: currentStock,
+        min_stock: minStock,
+      },
+    },
+  });
+
+  console.log('[notifyNewItemLowStock] result:', result);
+  return result;
+};
+
 module.exports = {
   getFeed,
   getUnreadCount,
@@ -140,4 +194,5 @@ module.exports = {
   getExpiringLots,
   getLowStockItems,
   getOverdueBorrows,
+  notifyNewItemLowStock,
 };

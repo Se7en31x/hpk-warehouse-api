@@ -102,8 +102,26 @@ const SelectMovementById = (id) => {
     });
 };
 
+/**
+ * Read an item's current_stock snapshot (maintained by DB triggers).
+ * Call this BEFORE any lot mutation in the same transaction to get balance_before.
+ *
+ * @param {string}      itemId
+ * @param {object}      tx     Prisma transaction client (optional)
+ * @returns {Promise<number>}
+ */
+const fetchItemCurrentStock = async (itemId, tx = prisma) => {
+    if (!itemId) return 0;
+    const item = await (tx || prisma).items.findUnique({
+        where:  { id: itemId },
+        select: { current_stock: true },
+    });
+    return item?.current_stock ?? 0;
+};
+
 module.exports = {
     createStockMovement,
     SelectAllMovements,
     SelectMovementById,
+    fetchItemCurrentStock,
 };

@@ -182,7 +182,13 @@ const SelectRequisitionById = async (id, tx = prisma) => {
                     },
                 }
             },
-            borrower_details: true,
+            borrower_details: {
+                include: {
+                    lookup_titles: {
+                        select: { short_name: true, name: true }
+                    }
+                }
+            },
             profiles_requisition_header_requester_idToprofiles: true
         }
     });

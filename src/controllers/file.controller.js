@@ -31,10 +31,12 @@ const removeItemImage = async (req, res) => {
 const uploadBorrowerDocument = async (req, res) => {
 	try {
 		const { id } = req.params;
-		if (!req.file) {
+		const files = req.files || (req.file ? [req.file] : []);
+		if (!files.length) {
 			return util.sendResponse(res, 400, 'No document file provided');
 		}
-		const result = await fileService.uploadBorrowerDocument(id, req.file.buffer);
+		const buffers = files.map((f) => f.buffer);
+		const result = await fileService.uploadBorrowerDocument(id, buffers);
 		return util.sendResponse(res, 200, 'Upload borrower document success', result);
 	} catch (error) {
 		return util.sendResponse(res, 500, error.message);

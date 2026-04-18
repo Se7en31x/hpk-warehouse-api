@@ -31,8 +31,11 @@ const createReceive = async (data, userSession) => {
 
         if (header.status === RECEIVE_STATUS.COMPLETED) {
             for (const item of receiveItemsPayload) {
-                const lotUpsertPayload = DTO.createLotUpsertDTO(item);
+                // Read balance BEFORE the lot is created/incremented
+                const balanceBefore = await stockMovementRepo.fetchItemCurrentStock(item.item_id, tx);
+                const qty = Number(item.qty);
 
+                const lotUpsertPayload = DTO.createLotUpsertDTO(item);
                 const lot = await lotRepo.upsertItemLot(
                     {
                         where: lotUpsertPayload.where,
@@ -47,7 +50,9 @@ const createReceive = async (data, userSession) => {
                     data.doc_no,
                     createdByName,
                     createdById,
-                    lot.id
+                    lot.id,
+                    balanceBefore,
+                    balanceBefore + qty
                 );
                 await stockMovementRepo.createStockMovement(stockMovementPayload, tx);
             }
@@ -137,6 +142,9 @@ const cancelReceive = async (headerId, userSession, reason = '') => {
             const lot = await lotRepo.selectLotByItemAndCode(receiveItem.item_id, receiveItem.lot_code, tx);
             const receiveQty = Number(receiveItem.qty || 0);
 
+            // Read balance BEFORE the lot is decremented
+            const balanceBefore = await stockMovementRepo.fetchItemCurrentStock(receiveItem.item_id, tx);
+
             const decremented = await lotRepo.decrementLotQuantitySafe(lot.id, receiveQty, tx);
             if (!decremented.count) {
                 throw createHttpError(400, 'Cancellation failed: some items have already been issued');
@@ -147,7 +155,9 @@ const cancelReceive = async (headerId, userSession, reason = '') => {
                 header.doc_no,
                 updatedByName,
                 updatedById,
-                lot.id
+                lot.id,
+                balanceBefore,
+                balanceBefore - receiveQty
             );
             await stockMovementRepo.createStockMovement(movementPayload, tx);
         }
@@ -304,6 +314,9 @@ const confirmReceive = async (headerId, itemsPayload = [], userSession = null) =
                 });
 
                 if (actualQty > 0) {
+                    // Read balance BEFORE the lot is created/incremented
+                    const balanceBefore = await stockMovementRepo.fetchItemCurrentStock(existingItem.item_id, tx);
+
                     const lotUpsertPayload = DTO.createLotUpsertDTO({
                         item_id: existingItem.item_id,
                         lot_code: lotCode,
@@ -322,14 +335,13 @@ const confirmReceive = async (headerId, itemsPayload = [], userSession = null) =
                     );
 
                     const stockMovementPayload = DTO.createStockMovementDTO(
-                        {
-                            item_id: existingItem.item_id,
-                            qty: actualQty,
-                        },
+                        { item_id: existingItem.item_id, qty: actualQty },
                         currentHeader.doc_no,
                         updatedByName,
                         updatedById,
-                        lot.id
+                        lot.id,
+                        balanceBefore,
+                        balanceBefore + actualQty
                     );
 
                     await stockMovementRepo.createStockMovement(stockMovementPayload, tx);

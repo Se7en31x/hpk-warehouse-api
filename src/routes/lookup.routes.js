@@ -13,4 +13,7 @@ router.get('/districts/:province_id',          lookupController.getDistricts);
 // GET /v1/lookup/subdistricts/:district_id (district_id = 4-char code, e.g. "1001")
 router.get('/subdistricts/:district_id',       lookupController.getSubdistricts);
 
+// GET /v1/lookup/titles
+router.get('/titles',                          lookupController.getTitles);
+
 module.exports = router;

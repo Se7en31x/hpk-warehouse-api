@@ -33,23 +33,36 @@ const removeItemImage = async (id) => {
 	});
 };
 
-const uploadBorrowerDocument = async (borrowerId, buffer) => {
+const uploadBorrowerDocument = async (borrowerId, buffers) => {
 	const existing = await borrowerRepo.getBorrowerById(borrowerId);
 	if (!existing) throw new Error('Borrower not found');
 
-	// Delete old Cloudinary asset if one exists
-	if (existing.id_card_public_id) {
-		await cloudinary.uploader.destroy(existing.id_card_public_id, { resource_type: 'auto' }).catch(() => {});
+	// Delete all previous Cloudinary assets
+	const oldPublicIds = (() => {
+		try { return JSON.parse(existing.id_card_public_id || '[]'); } catch { return []; }
+	})();
+	const legacySingle = !Array.isArray(oldPublicIds) && existing.id_card_public_id;
+	const toDelete = legacySingle ? [existing.id_card_public_id] : oldPublicIds;
+	for (const pid of toDelete) {
+		if (pid) await cloudinary.uploader.destroy(pid, { resource_type: 'auto' }).catch(() => {});
 	}
 
-	const result = await uploadDocumentToCloudinary(buffer, 'borrowers');
-	console.log('[Cloudinary] uploadBorrowerDocument — resource_type:', result.resource_type, '| url:', result.secure_url);
+	const allBuffers = Array.isArray(buffers) ? buffers : [buffers];
+	const uploads = await Promise.all(
+		allBuffers.map((buf) => uploadDocumentToCloudinary(buf, 'borrowers'))
+	);
+
+	const urls = uploads.map((r) => r.secure_url);
+	const publicIds = uploads.map((r) => r.public_id);
+
+	console.log('[Cloudinary] uploadBorrowerDocument — uploaded', uploads.length, 'file(s)', urls);
+
 	await borrowerRepo.updateBorrowerDocument(borrowerId, {
-		id_card_url: result.secure_url,
-		id_card_public_id: result.public_id,
+		id_card_url: JSON.stringify(urls),
+		id_card_public_id: JSON.stringify(publicIds).slice(0, 100),
 	});
 
-	return { id_card_url: result.secure_url };
+	return { id_card_urls: urls };
 };
 
 module.exports = {

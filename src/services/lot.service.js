@@ -85,6 +85,11 @@ const adjustLotStock = async (lotId, payload, user = {}) => {
             status: nextStatus,
         });
 
+        // Read balance BEFORE the lot is updated
+        const balanceBefore = qtyDiff !== 0
+            ? await stockMovementRepo.fetchItemCurrentStock(existingLot.item_id, tx)
+            : 0;
+
         await lotRepo.updateLot(lotId, data, tx);
 
         if (qtyDiff !== 0) {
@@ -96,6 +101,10 @@ const adjustLotStock = async (lotId, payload, user = {}) => {
                 note: fullNote,
                 created_by: user.email || null,
                 created_by_id: user.sub || null,
+                balance_before: balanceBefore,
+                balance_after: movementType === 'ADJUST_IN'
+                    ? balanceBefore + movementQty
+                    : balanceBefore - movementQty,
             }, tx);
         }
 
@@ -117,7 +126,11 @@ const deleteLot = async (lotId, user = {}) => {
     const currentQty = Number(existingLot.quantity || 0);
 
     return lotRepo.withTransaction(async (tx) => {
-        // Soft delete update
+        // Read balance BEFORE the lot is zeroed out
+        const balanceBefore = currentQty > 0
+            ? await stockMovementRepo.fetchItemCurrentStock(existingLot.item_id, tx)
+            : 0;
+
         const data = {
             quantity: 0,
             status: LOT_STATUS.CANCELLED,
@@ -126,7 +139,6 @@ const deleteLot = async (lotId, user = {}) => {
 
         await lotRepo.updateLot(lotId, data, tx);
 
-        // Adjust out inventory balance physically if the lot had items
         if (currentQty > 0) {
             await stockMovementRepo.createStockMovement({
                 item_id: existingLot.item_id,
@@ -136,6 +148,8 @@ const deleteLot = async (lotId, user = {}) => {
                 note: 'ยกเลิก Lot',
                 created_by: user.email || null,
                 created_by_id: user.sub || null,
+                balance_before: balanceBefore,
+                balance_after: balanceBefore - currentQty,
             }, tx);
         }
 

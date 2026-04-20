@@ -143,11 +143,9 @@ const createReusableReceive = async (data, userSession) => {
                 doc_no: data.doc_no.toString().trim(),
                 type: DTO.RECEIVE_TYPE,
                 status: RECEIVE_STATUS.COMPLETED,
-                supplier_id: data.supplier_id || null,
-                donor_name: data.donor_name || null,
-                receive_date: data.receive_date ? new Date(data.receive_date) : new Date(),
                 note: data.note || null,
                 created_by: createdById,
+                batch_id: data.batch_id || null,
             },
             tx
         );

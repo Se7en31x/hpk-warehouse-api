@@ -118,7 +118,7 @@ const getExpiredLotsReport = async ({ page, limit, dateTo, warehouseId, search }
 const getStockInItemReport = async ({ page, limit, dateFrom, dateTo, itemId, warehouseId, search }) => {
   const { skip, totalPages } = paginate(page, limit);
   const headerWhere = {
-    ...(dateFrom || dateTo ? { receive_date: repo.buildDateRange(dateFrom, dateTo) } : {}),
+    ...(dateFrom || dateTo ? { receive_batch: { is: { receive_date: repo.buildDateRange(dateFrom, dateTo) } } } : {}),
     ...(warehouseId && { receive_item: { some: { items: { warehouse_id: warehouseId } } } }),
     ...(search && { doc_no: { contains: search, mode: 'insensitive' } }),
   };
@@ -131,8 +131,8 @@ const getStockInItemReport = async ({ page, limit, dateFrom, dateTo, itemId, war
     items: rows.map(r => ({
       id:          String(r.id),
       docNo:       r.receive_header?.doc_no || '-',
-      receiveDate: toISODate(r.receive_header?.receive_date),
-      supplier:    r.receive_header?.supplier?.name || r.receive_header?.donor_name || '-',
+      receiveDate: toISODate(r.receive_header?.receive_batch?.receive_date),
+      supplier:    r.receive_header?.receive_batch?.supplier?.name || r.receive_header?.receive_batch?.donor_name || '-',
       itemCode:    r.items?.code || '-',
       itemName:    r.items?.name || '-',
       warehouse:   r.items?.warehouses?.name || '-',
@@ -205,14 +205,14 @@ const getRequisitionReport = async ({ page, limit, dateFrom, dateTo, status, typ
 const getStockInReportHeader = async ({ page, limit, dateFrom, dateTo, status, type, search }) => {
   const { skip, totalPages } = paginate(page, limit);
   const where = {
-    ...(dateFrom || dateTo ? { receive_date: repo.buildDateRange(dateFrom, dateTo) } : {}),
+    ...(dateFrom || dateTo ? { receive_batch: { is: { receive_date: repo.buildDateRange(dateFrom, dateTo) } } } : {}),
     ...(status && { status }),
     ...(type && { type }),
     ...(search && {
       OR: [
-        { doc_no:      { contains: search, mode: 'insensitive' } },
-        { note:        { contains: search, mode: 'insensitive' } },
-        { donor_name:  { contains: search, mode: 'insensitive' } },
+        { doc_no: { contains: search, mode: 'insensitive' } },
+        { note:   { contains: search, mode: 'insensitive' } },
+        { receive_batch: { is: { donor_name: { contains: search, mode: 'insensitive' } } } },
       ],
     }),
   };
@@ -231,8 +231,8 @@ const getStockInReportHeader = async ({ page, limit, dateFrom, dateTo, status, t
     return {
       id:         String(r.id),
       reportNo:   r.doc_no || '-',
-      date:       dateOnly(r.receive_date),
-      supplier:   r.supplier?.name || r.donor_name || '-',
+      date:       dateOnly(r.receive_batch?.receive_date),
+      supplier:   r.receive_batch?.supplier?.name || r.receive_batch?.donor_name || '-',
       totalValue: reportItems.reduce((sum, i) => sum + i.totalPrice, 0),
       status:     String(r.status || 'PENDING').toUpperCase(),
       items:      reportItems,

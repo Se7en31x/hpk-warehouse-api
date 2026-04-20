@@ -2,43 +2,78 @@ const receiveService = require('../services/receive.service');
 const DTO = require('../dtos/receive.dto');
 const util = require('../utils/response');
 
-/**
- * @typedef {Object} ReceiveItemInput
- * @property {string} item_id
- * @property {number} expected_qty
- * @property {string=} lot_code
- * @property {number} qty
- * @property {number|string=} cost_price
- * @property {string|null=} expired_at
- * @property {string|null=} warehouse_id
- */
-
-/**
- * @typedef {Object} CreateReceiveBody
- * @property {string} doc_no
- * @property {string} type
- * @property {string|null=} supplier_id
- * @property {string|null=} donor_name
- * @property {string|null=} receive_date
- * @property {string|null=} note
- * @property {string} status
- * @property {ReceiveItemInput[]} items
- */
-
-const parseListQuery = (query) => {
-    return DTO.listReceivesQueryDTO(query);
-};
-
 const RECEIVE_STATUSES = {
     PENDING: 'PENDING',
     COMPLETED: 'COMPLETED',
 };
 
-/** @param {CreateReceiveBody} data */
+// ── Batch ──────────────────────────────────────────────────────────────────────
+
+const validateCreateBatch = (data) => {
+    if (!data || typeof data !== 'object') return 'Invalid body data';
+    if (!data.batch_no || !data.batch_no.toString().trim()) return 'batch_no is required';
+    if (!data.acquisition_type || !data.acquisition_type.toString().trim()) return 'acquisition_type is required';
+    return null;
+};
+
+const createBatch = async (req, res) => {
+    try {
+        const data = req.body;
+        const validationMessage = validateCreateBatch(data);
+        if (validationMessage) {
+            return util.sendResponse(res, 400, validationMessage);
+        }
+
+        const created = await receiveService.createBatch(data, req.user || null);
+        req.io.emit('REFRESH_DATA', 'RECEIVES');
+        return util.sendResponse(res, 201, 'create receive batch success', created);
+    } catch (error) {
+        if (error?.code === 'P2002') {
+            return util.sendResponse(res, 409, 'batch_no already exists');
+        }
+        return util.sendResponse(res, error?.statusCode || 500, error.message || 'create batch failed');
+    }
+};
+
+const getBatchById = async (req, res) => {
+    try {
+        const id = Number(req.params.batchId);
+        if (!Number.isInteger(id) || id <= 0) {
+            return util.sendResponse(res, 400, 'invalid batch id');
+        }
+
+        const batch = await receiveService.getBatchById(id);
+        return util.sendResponse(res, 200, 'get batch success', batch);
+    } catch (error) {
+        if (error?.statusCode) {
+            return util.sendResponse(res, error.statusCode, error.message);
+        }
+        return util.sendResponse(res, 500, error.message || 'fetch batch failed');
+    }
+};
+
+// ── List ───────────────────────────────────────────────────────────────────────
+
+const getReceives = async (req, res) => {
+    try {
+        const query = DTO.listBatchesQueryDTO(req.query);
+        const result = await receiveService.getReceives(query);
+        return util.sendListResponse(res, 200, 'list batches success', result);
+    } catch (error) {
+        return util.sendResponse(res, 500, error.message || 'fetch batches failed');
+    }
+};
+
+// ── Header ─────────────────────────────────────────────────────────────────────
+
+/** @param {object} data */
 const validateCreateReceive = (data) => {
     if (!data || typeof data !== 'object') return 'Invalid body data';
     if (!data.doc_no || !data.doc_no.toString().trim()) return 'doc_no is required';
     if (!data.type || !data.type.toString().trim()) return 'type is required';
+
+    const batchId = Number(data.batch_id);
+    if (!Number.isInteger(batchId) || batchId <= 0) return 'batch_id must be a valid integer';
 
     const normalizedStatus = (data.status || '').toString().trim().toUpperCase();
     if (!normalizedStatus) return 'status is required';
@@ -71,13 +106,17 @@ const validateCreateReceive = (data) => {
             }
         }
 
+        const itemType = (data.type || '').toString().trim().toUpperCase();
+
         if (normalizedStatus === RECEIVE_STATUSES.COMPLETED) {
-            if (!item?.lot_code || !item.lot_code.toString().trim()) {
-                return `items[${i}].lot_code is required when status is COMPLETED`;
+            if (itemType !== 'PURCHASE_ASSET') {
+                if (!item?.lot_code || !item.lot_code.toString().trim()) {
+                    return `items[${i}].lot_code is required when status is COMPLETED`;
+                }
             }
 
-            if (qty !== expectedQty) {
-                return `items[${i}].qty must be equal to expected_qty when status is COMPLETED`;
+            if (qty > expectedQty) {
+                return `items[${i}].qty cannot exceed expected_qty`;
             }
         }
     }
@@ -90,6 +129,7 @@ const createReceive = async (req, res) => {
         const data = {
             ...req.body,
             status: (req.body?.status || '').toString().trim().toUpperCase(),
+            batch_id: Number(req.body?.batch_id),
         };
         const validationMessage = validateCreateReceive(data);
         if (validationMessage) {
@@ -110,38 +150,11 @@ const createReceive = async (req, res) => {
         if (error?.code === 'P2002') {
             return util.sendResponse(res, 409, 'doc_no already exists');
         }
-
-        return util.sendResponse(res, 500, error.message || 'create receive failed');
+        return util.sendResponse(res, error?.statusCode || 500, error.message || 'create receive failed');
     }
 };
 
-const getReceives = async (req, res) => {
-    try {
-        const query = parseListQuery(req.query);
-        const result = await receiveService.getReceives(query);
-        return util.sendListResponse(res, 200, 'list receives success', result);
-    } catch (error) {
-        return util.sendResponse(res, 500, error.message || 'fetch receives failed');
-    }
-};
-
-const getReceiveById = async (req, res) => {
-    try {
-        const id = Number(req.params.id);
-        if (!Number.isInteger(id) || id <= 0) {
-            return util.sendResponse(res, 400, 'invalid receive id');
-        }
-
-        const receive = await receiveService.getReceiveById(id);
-        return util.sendResponse(res, 200, 'get receive by id success', receive);
-    } catch (error) {
-        if (error?.statusCode) {
-            return util.sendResponse(res, error.statusCode, error.message);
-        }
-
-        return util.sendResponse(res, 500, error.message || 'fetch receive by id failed');
-    }
-};
+// ── Confirm / Cancel ───────────────────────────────────────────────────────────
 
 const cancelReceive = async (req, res) => {
     try {
@@ -163,7 +176,6 @@ const cancelReceive = async (req, res) => {
         if (error?.statusCode) {
             return util.sendResponse(res, error.statusCode, error.message);
         }
-
         return util.sendResponse(res, 500, error.message || 'cancel receive failed');
     }
 };
@@ -192,15 +204,15 @@ const confirmReceive = async (req, res) => {
         if (error?.statusCode) {
             return util.sendResponse(res, error.statusCode, error.message);
         }
-
         return util.sendResponse(res, 500, error.message || 'confirm receive failed');
     }
 };
 
 module.exports = {
-    createReceive,
+    createBatch,
+    getBatchById,
     getReceives,
-    getReceiveById,
+    createReceive,
     cancelReceive,
     confirmReceive,
 };

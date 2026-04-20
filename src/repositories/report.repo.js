@@ -77,7 +77,9 @@ const findStockInItems = async ({ headerWhere, itemWhere, skip, limit }) => {
   const rows = await prisma.receive_item.findMany({
     where: { header_id: { in: pagedHeaderIds }, ...itemWhere },
     include: {
-      receive_header: { include: { supplier: true } },
+      receive_header: {
+        include: { receive_batch: { include: { supplier: true } } },
+      },
       items: { include: { unit: true, warehouses: true } },
     },
     orderBy: { id: 'desc' },
@@ -107,9 +109,9 @@ const findStockInHeaders = async ({ skip, limit, where }) => {
     prisma.receive_header.count({ where }),
     prisma.receive_header.findMany({
       where, skip, take: limit,
-      orderBy: { receive_date: 'desc' },
+      orderBy: { id: 'desc' },
       include: {
-        supplier: true,
+        receive_batch: { include: { supplier: true } },
         receive_item: { include: { items: { include: { categories: true, unit: true, warehouses: true } } } },
       },
     }),

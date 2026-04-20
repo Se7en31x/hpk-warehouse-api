@@ -1,13 +1,27 @@
-const createReceiveHeaderDTO = (data = {}, createdBy = null) => ({
-    doc_no: data.doc_no.toString().trim(),
-    type: data.type.toString().trim(),
+// ── Batch ──────────────────────────────────────────────────────────────────────
+
+const createReceiveBatchDTO = (data = {}, createdBy = null) => ({
+    batch_no: data.batch_no.toString().trim(),
+    acquisition_type: data.acquisition_type.toString().trim(),
     supplier_id: data.supplier_id || null,
     donor_name: data.donor_name || null,
     receive_date: data.receive_date ? new Date(data.receive_date) : new Date(),
     note: data.note || null,
     created_by: createdBy || null,
-    status: data.status,
 });
+
+// ── Header ─────────────────────────────────────────────────────────────────────
+
+const createReceiveHeaderDTO = (data = {}, createdBy = null) => ({
+    doc_no: data.doc_no.toString().trim(),
+    type: data.type.toString().trim(),
+    note: data.note || null,
+    created_by: createdBy || null,
+    status: data.status,
+    batch_id: data.batch_id || null,
+});
+
+// ── Items / Lots / Movements ───────────────────────────────────────────────────
 
 const createReceiveItemsDTO = (items = [], headerId) => {
     return items.map((item) => ({
@@ -50,7 +64,15 @@ const createLotUpsertDTO = (item = {}) => {
     };
 };
 
-const createStockMovementDTO = (item = {}, docNo = '', createdByName = 'SYSTEM', createdById = null, lotId = null, balanceBefore = 0, balanceAfter = 0) => ({
+const createStockMovementDTO = (
+    item = {},
+    docNo = '',
+    createdByName = 'SYSTEM',
+    createdById = null,
+    lotId = null,
+    balanceBefore = 0,
+    balanceAfter = 0
+) => ({
     item_id: item.item_id,
     lot_id: lotId,
     quantity: Number(item.qty),
@@ -62,7 +84,15 @@ const createStockMovementDTO = (item = {}, docNo = '', createdByName = 'SYSTEM',
     balance_after: balanceAfter,
 });
 
-const createCancelStockMovementDTO = (item = {}, docNo = '', createdByName = 'SYSTEM', createdById = null, lotId = null, balanceBefore = 0, balanceAfter = 0) => ({
+const createCancelStockMovementDTO = (
+    item = {},
+    docNo = '',
+    createdByName = 'SYSTEM',
+    createdById = null,
+    lotId = null,
+    balanceBefore = 0,
+    balanceAfter = 0
+) => ({
     item_id: item.item_id,
     lot_id: lotId,
     quantity: Number(item.qty),
@@ -74,7 +104,9 @@ const createCancelStockMovementDTO = (item = {}, docNo = '', createdByName = 'SY
     balance_after: balanceAfter,
 });
 
-const listReceivesQueryDTO = (query = {}) => ({
+// ── Query DTOs ─────────────────────────────────────────────────────────────────
+
+const listBatchesQueryDTO = (query = {}) => ({
     page: Math.max(1, Number(query.page) || 1),
     limit: Math.min(100, Math.max(1, Number(query.limit) || 10)),
     keyword: (query.keyword || '').toString().trim(),
@@ -83,6 +115,8 @@ const listReceivesQueryDTO = (query = {}) => ({
     start_date: (query.start_date || '').toString().trim(),
     end_date: (query.end_date || '').toString().trim(),
 });
+
+// ── Response Mappers ───────────────────────────────────────────────────────────
 
 const mapReceiveItemResponse = (item = {}) => ({
     id: item.id,
@@ -97,16 +131,13 @@ const mapReceiveItemResponse = (item = {}) => ({
     expired_at: item.expired_at,
 });
 
-const mapReceiveHeaderResponse = (header = {}) => ({
+const mapReceiveBatchHeaderResponse = (header = {}) => ({
     id: header.id,
     doc_no: header.doc_no,
     type: header.type,
     status: header.status,
-    supplier_id: header.supplier_id,
-    supplier_name: header.supplier?.name || null,
-    donor_name: header.donor_name,
-    receive_date: header.receive_date,
     note: header.note,
+    batch_id: header.batch_id,
     created_by: header.created_by,
     created_at: header.created_at,
     updated_at: header.updated_at,
@@ -115,12 +146,32 @@ const mapReceiveHeaderResponse = (header = {}) => ({
         : [],
 });
 
+const mapReceiveBatchResponse = (batch = {}) => ({
+    id: batch.id,
+    batch_no: batch.batch_no,
+    acquisition_type: batch.acquisition_type,
+    supplier_id: batch.supplier_id,
+    supplier_name: batch.supplier?.name || null,
+    donor_name: batch.donor_name,
+    receive_date: batch.receive_date,
+    note: batch.note,
+    created_by: batch.created_by,
+    created_at: batch.created_at,
+    updated_at: batch.updated_at,
+    headers: Array.isArray(batch.receive_header)
+        ? batch.receive_header.map(mapReceiveBatchHeaderResponse)
+        : [],
+});
+
 module.exports = {
+    createReceiveBatchDTO,
     createReceiveHeaderDTO,
     createReceiveItemsDTO,
     createLotUpsertDTO,
     createStockMovementDTO,
     createCancelStockMovementDTO,
-    listReceivesQueryDTO,
-    mapReceiveHeaderResponse,
+    listBatchesQueryDTO,
+    mapReceiveBatchResponse,
+    mapReceiveBatchHeaderResponse,
+    mapReceiveItemResponse,
 };

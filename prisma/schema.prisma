@@ -274,22 +274,22 @@ model reusable_return_request_items {
 }
 
 model supplier {
-  id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name                String
   contact             String?
   address             String?
   phone               String?
   tax_id              String?
-  active              Boolean?         @default(true)
-  created_at          DateTime?        @default(now()) @db.Timestamptz(6)
-  updated_at          DateTime?        @default(now()) @db.Timestamptz(6)
-  deleted_at          DateTime?        @db.Timestamptz(6)
-  bank_account_number String?          @db.VarChar(50)
-  bank_account_name   String?          @db.VarChar(50)
-  bank_name           String?          @db.VarChar(100)
-  email               String?          @db.VarChar(100)
-  contact_phone       String?          @db.VarChar
-  receive_header      receive_header[]
+  active              Boolean?        @default(true)
+  created_at          DateTime?       @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime?       @default(now()) @db.Timestamptz(6)
+  deleted_at          DateTime?       @db.Timestamptz(6)
+  bank_account_number String?         @db.VarChar(50)
+  bank_account_name   String?         @db.VarChar(50)
+  bank_name           String?         @db.VarChar(100)
+  email               String?         @db.VarChar(100)
+  contact_phone       String?         @db.VarChar
+  receive_batch       receive_batch[]
 
   @@schema("public")
 }
@@ -299,23 +299,21 @@ model receive_header {
   doc_no               String           @unique @db.VarChar(50)
   type                 String           @db.VarChar(50)
   status               String?          @default("PENDING") @db.VarChar(50)
-  supplier_id          String?          @db.Uuid
-  donor_name           String?          @db.VarChar(255)
-  receive_date         DateTime?        @default(now()) @db.Timestamptz(6)
   note                 String?
   created_by           String?          @db.Uuid
   created_at           DateTime?        @default(now()) @db.Timestamptz(6)
   updated_at           DateTime?        @default(now()) @db.Timestamptz(6)
   parent_id            Int?
+  batch_id             Int?
+  receive_batch        receive_batch?   @relation(fields: [batch_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   receive_header       receive_header?  @relation("receive_headerToreceive_header", fields: [parent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   other_receive_header receive_header[] @relation("receive_headerToreceive_header")
-  supplier             supplier?        @relation(fields: [supplier_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "receive_header_supplier_fk")
   users                profiles?        @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "receive_header_users_fk")
   receive_item         receive_item[]
 
   @@index([doc_no], map: "idx_receive_header_doc_no")
   @@index([type], map: "idx_receive_header_type")
-  @@index([receive_date], map: "idx_receive_header_date")
+  @@index([batch_id], map: "idx_receive_header_batch_id")
   @@schema("inventory")
 }
 
@@ -1005,6 +1003,7 @@ model profiles {
   role_id                                                      Int?
   notification_recipients                                      notification_recipients[]
   notifications_created                                        notifications[]           @relation("notifications_created_by")
+  receive_batch                                                receive_batch[]
   receive_header                                               receive_header[]
   requisition_header_requisition_header_approver_idToprofiles  requisition_header[]      @relation("requisition_header_approver_idToprofiles")
   requisition_header_requisition_header_requester_idToprofiles requisition_header[]      @relation("requisition_header_requester_idToprofiles")
@@ -1203,6 +1202,26 @@ model lookup_clinics {
   clinic_name String @db.VarChar(100)
 
   @@schema("public")
+}
+
+model receive_batch {
+  id               Int              @id @default(autoincrement())
+  batch_no         String           @unique @db.VarChar(100)
+  acquisition_type String           @db.VarChar(50)
+  supplier_id      String?          @db.Uuid
+  donor_name       String?          @db.VarChar(255)
+  receive_date     DateTime?        @default(now()) @db.Timestamptz(6)
+  note             String?
+  created_by       String?          @db.Uuid
+  created_at       DateTime?        @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime?        @default(now()) @db.Timestamptz(6)
+  profiles         profiles?        @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  supplier         supplier?        @relation(fields: [supplier_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  receive_header   receive_header[]
+
+  @@index([receive_date], map: "idx_receive_batch_date")
+  @@index([batch_no], map: "idx_receive_batch_no")
+  @@schema("inventory")
 }
 
 /// The underlying view does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.

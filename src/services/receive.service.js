@@ -18,6 +18,21 @@ const createHttpError = (statusCode, message) => {
     return error;
 };
 
+// ── Create Batch ───────────────────────────────────────────────────────────────
+
+const createBatch = async (data, userSession) => {
+    const createdById = userSession?.sub || null;
+    const batchPayload = DTO.createReceiveBatchDTO(data, createdById);
+
+    return receiveRepo.withTransaction(async (tx) => {
+        const batch = await receiveRepo.createReceiveBatch(batchPayload, tx);
+        const fullBatch = await receiveRepo.SelectBatchById(batch.id, tx);
+        return DTO.mapReceiveBatchResponse(fullBatch);
+    });
+};
+
+// ── Create Header ──────────────────────────────────────────────────────────────
+
 const createReceive = async (data, userSession) => {
     const createdById = userSession?.sub || null;
     const createdByName = userSession?.email || createdById || 'SYSTEM';
@@ -30,54 +45,91 @@ const createReceive = async (data, userSession) => {
         await receiveRepo.createReceiveItems(receiveItemsPayload, tx);
 
         if (header.status === RECEIVE_STATUS.COMPLETED) {
-            for (const item of receiveItemsPayload) {
-                // Read balance BEFORE the lot is created/incremented
-                const balanceBefore = await stockMovementRepo.fetchItemCurrentStock(item.item_id, tx);
-                const qty = Number(item.qty);
-
-                const lotUpsertPayload = DTO.createLotUpsertDTO(item);
-                const lot = await lotRepo.upsertItemLot(
-                    {
-                        where: lotUpsertPayload.where,
-                        update: lotUpsertPayload.update,
-                        create: lotUpsertPayload.create,
-                    },
-                    tx
+            if (header.type === ASSET_TYPE) {
+                const createdItems = await receiveRepo.selectReceiveItemsByHeader(header.id, tx);
+                const deptByItemId = new Map(
+                    (data.items || []).map((it) => [it.item_id, it.department_id || null])
+                );
+                const noteByItemId = new Map(
+                    (data.items || []).map((it) => [it.item_id, it.note || null])
                 );
 
-                const stockMovementPayload = DTO.createStockMovementDTO(
-                    item,
-                    data.doc_no,
-                    createdByName,
-                    createdById,
-                    lot.id,
-                    balanceBefore,
-                    balanceBefore + qty
-                );
-                await stockMovementRepo.createStockMovement(stockMovementPayload, tx);
+                for (const ri of createdItems) {
+                    const qty = Number(receiveItemsPayload.find((p) => p.item_id === ri.item_id)?.qty || 0);
+                    const deptId = deptByItemId.get(ri.item_id) || null;
+                    const note = noteByItemId.get(ri.item_id) || null;
+
+                    for (let u = 0; u < qty; u++) {
+                        const assetCode = await assetRepo.generateAssetCode(tx);
+                        await assetRepo.createAsset(
+                            {
+                                asset_code: assetCode,
+                                item_id: ri.item_id,
+                                receive_item_id: ri.id,
+                                serial_no: null,
+                                department_id: deptId,
+                                status: 'READY',
+                                note,
+                            },
+                            tx
+                        );
+                    }
+                }
+            } else {
+                for (const item of receiveItemsPayload) {
+                    const balanceBefore = await stockMovementRepo.fetchItemCurrentStock(item.item_id, tx);
+                    const qty = Number(item.qty);
+
+                    if (qty <= 0) continue;
+
+                    const lotUpsertPayload = DTO.createLotUpsertDTO(item);
+                    const lot = await lotRepo.upsertItemLot(
+                        {
+                            where: lotUpsertPayload.where,
+                            update: lotUpsertPayload.update,
+                            create: lotUpsertPayload.create,
+                        },
+                        tx
+                    );
+
+                    const stockMovementPayload = DTO.createStockMovementDTO(
+                        item,
+                        data.doc_no,
+                        createdByName,
+                        createdById,
+                        lot.id,
+                        balanceBefore,
+                        balanceBefore + qty
+                    );
+                    await stockMovementRepo.createStockMovement(stockMovementPayload, tx);
+                }
             }
         }
 
         const createdHeader = await receiveRepo.SelectReceiveById(header.id, tx);
-        return DTO.mapReceiveHeaderResponse(createdHeader);
+        return DTO.mapReceiveBatchHeaderResponse(createdHeader);
     });
 };
 
-const getReceives = async ({ page = 1, limit = 10, keyword = '', type = '', status = '', start_date = '', end_date = '' } = {}) => {
-    const [items, total] = await receiveRepo.SelectAllReceives({
-        page,
-        limit,
-        keyword,
-        type,
-        status,
-        start_date,
-        end_date,
+// ── List Batches ───────────────────────────────────────────────────────────────
+
+const getReceives = async ({
+    page = 1,
+    limit = 10,
+    keyword = '',
+    type = '',
+    status = '',
+    start_date = '',
+    end_date = '',
+} = {}) => {
+    const [items, total] = await receiveRepo.SelectAllBatches({
+        page, limit, keyword, type, status, start_date, end_date,
     });
 
     const totalPages = Math.max(1, Math.ceil(total / limit));
 
     return {
-        items: items.map(DTO.mapReceiveHeaderResponse),
+        items: items.map(DTO.mapReceiveBatchResponse),
         total,
         page,
         limit,
@@ -87,14 +139,17 @@ const getReceives = async ({ page = 1, limit = 10, keyword = '', type = '', stat
     };
 };
 
-const getReceiveById = async (headerId) => {
-    const header = await receiveRepo.SelectReceiveById(headerId);
-    if (!header) {
-        throw createHttpError(404, 'Receive document not found');
-    }
+// ── Get Single Batch ───────────────────────────────────────────────────────────
 
-    return DTO.mapReceiveHeaderResponse(header);
+const getBatchById = async (batchId) => {
+    const batch = await receiveRepo.SelectBatchById(batchId);
+    if (!batch) {
+        throw createHttpError(404, 'Receive batch not found');
+    }
+    return DTO.mapReceiveBatchResponse(batch);
 };
+
+// ── Cancel Header ──────────────────────────────────────────────────────────────
 
 const cancelReceive = async (headerId, userSession, reason = '') => {
     const updatedById = userSession?.sub || null;
@@ -125,7 +180,7 @@ const cancelReceive = async (headerId, userSession, reason = '') => {
             );
 
             const cancelledHeader = await receiveRepo.SelectReceiveById(headerId, tx);
-            return DTO.mapReceiveHeaderResponse(cancelledHeader);
+            return DTO.mapReceiveBatchHeaderResponse(cancelledHeader);
         }
 
         for (const receiveItem of header.receive_item) {
@@ -142,7 +197,6 @@ const cancelReceive = async (headerId, userSession, reason = '') => {
             const lot = await lotRepo.selectLotByItemAndCode(receiveItem.item_id, receiveItem.lot_code, tx);
             const receiveQty = Number(receiveItem.qty || 0);
 
-            // Read balance BEFORE the lot is decremented
             const balanceBefore = await stockMovementRepo.fetchItemCurrentStock(receiveItem.item_id, tx);
 
             const decremented = await lotRepo.decrementLotQuantitySafe(lot.id, receiveQty, tx);
@@ -172,9 +226,11 @@ const cancelReceive = async (headerId, userSession, reason = '') => {
         );
 
         const cancelledHeader = await receiveRepo.SelectReceiveById(headerId, tx);
-        return DTO.mapReceiveHeaderResponse(cancelledHeader);
+        return DTO.mapReceiveBatchHeaderResponse(cancelledHeader);
     });
 };
+
+// ── Confirm Header ─────────────────────────────────────────────────────────────
 
 const confirmReceive = async (headerId, itemsPayload = [], userSession = null) => {
     const updatedById = userSession?.sub || null;
@@ -232,7 +288,9 @@ const confirmReceive = async (headerId, itemsPayload = [], userSession = null) =
             if (Number.isInteger(payloadReceiveItemId) && existingById.has(payloadReceiveItemId)) {
                 existingItem = existingById.get(payloadReceiveItemId);
             } else if (payloadItemId && existingByItemId.has(payloadItemId)) {
-                const candidate = existingByItemId.get(payloadItemId).find((it) => !matchedReceiveItemIds.has(it.id));
+                const candidate = existingByItemId
+                    .get(payloadItemId)
+                    .find((it) => !matchedReceiveItemIds.has(it.id));
                 existingItem = candidate || null;
             }
 
@@ -260,7 +318,6 @@ const confirmReceive = async (headerId, itemsPayload = [], userSession = null) =
             }
 
             if (currentHeader.type === ASSET_TYPE) {
-                // --- ASSET branch: สร้าง medical_assets รายชิ้น ไม่มี lot/stock movement ---
                 const assetsInput = Array.isArray(payloadItem?.assets) ? payloadItem.assets : [];
                 if (actualQty > 0 && assetsInput.length !== actualQty) {
                     throw createHttpError(
@@ -290,7 +347,6 @@ const confirmReceive = async (headerId, itemsPayload = [], userSession = null) =
                     );
                 }
             } else {
-                // --- STOCK branch: lot + stock movement (เดิม) ---
                 const lotCode = payloadItem?.lot_code ? payloadItem.lot_code.toString().trim() : null;
                 if (actualQty > 0 && !lotCode) {
                     throw createHttpError(
@@ -314,8 +370,10 @@ const confirmReceive = async (headerId, itemsPayload = [], userSession = null) =
                 });
 
                 if (actualQty > 0) {
-                    // Read balance BEFORE the lot is created/incremented
-                    const balanceBefore = await stockMovementRepo.fetchItemCurrentStock(existingItem.item_id, tx);
+                    const balanceBefore = await stockMovementRepo.fetchItemCurrentStock(
+                        existingItem.item_id,
+                        tx
+                    );
 
                     const lotUpsertPayload = DTO.createLotUpsertDTO({
                         item_id: existingItem.item_id,
@@ -368,7 +426,6 @@ const confirmReceive = async (headerId, itemsPayload = [], userSession = null) =
             throw createHttpError(400, 'itemsPayload must include all receive items in this document');
         }
 
-        // Asset type ไม่สร้าง backorder
         if (backorderItems.length > 0 && currentHeader.type !== ASSET_TYPE) {
             const baseBackorderDocNo = `${currentHeader.doc_no}-B`;
             const existingBackorderCount = await tx.receive_header.count({
@@ -390,19 +447,17 @@ const confirmReceive = async (headerId, itemsPayload = [], userSession = null) =
                     doc_no: backorderDocNo,
                     type: currentHeader.type,
                     status: RECEIVE_STATUS.PENDING,
-                    supplier_id: currentHeader.supplier_id || null,
-                    donor_name: currentHeader.donor_name || null,
-                    receive_date: new Date(),
                     note: `Auto-generated backorder from ${currentHeader.doc_no}`,
                     created_by: updatedById,
                     parent_id: currentHeader.id,
+                    batch_id: currentHeader.batch_id,
                 },
                 tx
             );
 
             const backorderItemsPayload = DTO.createReceiveItemsDTO(backorderItems, backorderHeader.id);
             await receiveRepo.createReceiveItems(backorderItemsPayload, tx);
-        } // end backorder block
+        }
 
         await receiveRepo.updateReceiveHeader(
             currentHeader.id,
@@ -411,14 +466,15 @@ const confirmReceive = async (headerId, itemsPayload = [], userSession = null) =
         );
 
         const updatedHeader = await receiveRepo.SelectReceiveById(currentHeader.id, tx);
-        return DTO.mapReceiveHeaderResponse(updatedHeader);
+        return DTO.mapReceiveBatchHeaderResponse(updatedHeader);
     });
 };
 
 module.exports = {
+    createBatch,
     createReceive,
     getReceives,
-    getReceiveById,
+    getBatchById,
     cancelReceive,
     confirmReceive,
 };

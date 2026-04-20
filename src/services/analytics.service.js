@@ -203,8 +203,8 @@ async function getStockInMonthly({ months }) {
   const end        = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
   const rows = await prisma.receive_header.findMany({
-    where:  { receive_date: { gte: start, lt: end } },
-    select: { receive_date: true, type: true },
+    where:  { receive_batch: { is: { receive_date: { gte: start, lt: end } } } },
+    select: { type: true, receive_batch: { select: { receive_date: true } } },
   });
 
   const buckets = new Map();
@@ -214,7 +214,7 @@ async function getStockInMonthly({ months }) {
     buckets.set(key, { month: key, total: 0, byType: {} });
   }
   for (const r of rows) {
-    const key = toMonthKey(r.receive_date || now);
+    const key = toMonthKey(r.receive_batch?.receive_date || now);
     if (!buckets.has(key)) continue;
     const b = buckets.get(key);
     const t = String(r.type || 'UNKNOWN').toUpperCase();

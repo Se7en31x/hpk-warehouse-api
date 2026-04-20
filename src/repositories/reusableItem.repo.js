@@ -21,7 +21,7 @@ const unitInclude = {
     receive_item: {
         select: {
             id: true,
-            receive_header: { select: { id: true, doc_no: true, receive_date: true } },
+            receive_header: { select: { id: true, doc_no: true, receive_batch: { select: { receive_date: true } } } },
         },
     },
 };

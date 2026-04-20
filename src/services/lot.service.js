@@ -11,6 +11,9 @@ const getAllLots = async (query) => {
     const category_id = (query.category_id || query.category || '').toString().trim();
     const item_id = (query.item_id || query.item || '').toString().trim();
     const status = (query.status || '').toString().trim();
+    const start_date = (query.start_date || '').toString().trim();
+    const end_date = (query.end_date || '').toString().trim();
+    const expiry_days = (query.expiry_days || '').toString().trim();
 
     const [items, total] = await lotRepo.selectAllLot({
         page,
@@ -20,6 +23,9 @@ const getAllLots = async (query) => {
         category_id,
         item_id,
         status,
+        start_date,
+        end_date,
+        expiry_days,
     });
 
     const totalPages = Math.max(1, Math.ceil(total / limit));

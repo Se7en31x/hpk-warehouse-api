@@ -1,13 +1,16 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-const buildLotWhere = ({ keyword = '', warehouse_id = '', category_id = '', item_id = '', status = '' } = {}) => {
+const buildLotWhere = ({ keyword = '', warehouse_id = '', category_id = '', item_id = '', status = '', start_date = '', end_date = '', expiry_days = '' } = {}) => {
     const where = { deleted_at: null, AND: [] };
     const normalizedKeyword = (keyword || '').trim();
     const normalizedWarehouseId = (warehouse_id || '').trim();
     const normalizedCategoryId = (category_id || '').trim();
     const normalizedItemId = (item_id || '').trim();
     const normalizedStatus = (status || '').toString().trim().toUpperCase();
+    const normalizedStartDate = (start_date || '').trim();
+    const normalizedEndDate = (end_date || '').trim();
+    const normalizedExpiryDays = Number(expiry_days) || 0;
 
     if (normalizedKeyword) {
         where.AND.push({
@@ -34,6 +37,25 @@ const buildLotWhere = ({ keyword = '', warehouse_id = '', category_id = '', item
 
     if (normalizedStatus) {
         where.AND.push({ status: normalizedStatus });
+    }
+
+    if (normalizedStartDate || normalizedEndDate) {
+        const dateFilter = {};
+        if (normalizedStartDate) dateFilter.gte = new Date(normalizedStartDate);
+        if (normalizedEndDate) {
+            const end = new Date(normalizedEndDate);
+            end.setHours(23, 59, 59, 999);
+            dateFilter.lte = end;
+        }
+        where.AND.push({ created_at: dateFilter });
+    }
+
+    if (normalizedExpiryDays > 0) {
+        const now = new Date();
+        const future = new Date();
+        future.setDate(future.getDate() + normalizedExpiryDays);
+        future.setHours(23, 59, 59, 999);
+        where.AND.push({ expired_at: { not: null, gte: now, lte: future } });
     }
 
     if (!where.AND.length) {
@@ -84,8 +106,8 @@ const lotSelect = {
     },
 };
 
-const selectAllLot = ({ page = 1, limit = 10, keyword = '', warehouse_id = '', category_id = '', item_id = '', status = '' } = {}) => {
-    const where = buildLotWhere({ keyword, warehouse_id, category_id, item_id, status });
+const selectAllLot = ({ page = 1, limit = 10, keyword = '', warehouse_id = '', category_id = '', item_id = '', status = '', start_date = '', end_date = '', expiry_days = '' } = {}) => {
+    const where = buildLotWhere({ keyword, warehouse_id, category_id, item_id, status, start_date, end_date, expiry_days });
     const skip = (page - 1) * limit;
 
     return prisma.$transaction([

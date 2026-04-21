@@ -220,6 +220,44 @@ const findProfilesByIds = async (ids) => {
   return profileMap;
 };
 
+// ── Receive Report ─────────────────────────────────────────────────────────────
+
+const findReceiveReportData = async ({ skip, limit, where }) => {
+  const [total, rows] = await Promise.all([
+    prisma.receive_item.count({ where }),
+    prisma.receive_item.findMany({
+      where, skip, take: limit,
+      orderBy: { id: 'desc' },
+      select: {
+        id: true,
+        expected_qty: true,
+        qty: true,
+        cost_price: true,
+        lot_code: true,
+        items: { select: { id: true, code: true, name: true, unit: { select: { name: true } } } },
+        receive_header: {
+          select: {
+            id: true,
+            doc_no: true,
+            type: true,
+            receive_batch: {
+              select: {
+                id: true,
+                batch_no: true,
+                receive_date: true,
+                acquisition_type: true,
+                supplier: { select: { name: true } },
+                donor_name: true,
+              },
+            },
+          },
+        },
+      },
+    }),
+  ]);
+  return { total, rows };
+};
+
 module.exports = {
   prisma,
   buildDateRange,
@@ -234,4 +272,5 @@ module.exports = {
   findAssets,
   findDepartments,
   findProfilesByIds,
+  findReceiveReportData,
 };

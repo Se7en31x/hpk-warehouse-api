@@ -460,6 +460,68 @@ const getInventoryBalanceSummary = async ({ search, warehouseId, categoryId }) =
   return { warehouses, totalItems: rows.length };
 };
 
+// ── Receive Report ─────────────────────────────────────────────────────────────
+
+const getReceiveReportData = async ({ page, limit, dateFrom, dateTo, search, supplier }) => {
+  const { skip, totalPages } = paginate(page, limit);
+
+  const conditions = [];
+
+  const dateRange = repo.buildDateRange(dateFrom, dateTo);
+  if (dateRange) {
+    conditions.push({ receive_header: { receive_batch: { receive_date: dateRange } } });
+  }
+
+  if (supplier && supplier.trim()) {
+    conditions.push({
+      OR: [
+        { receive_header: { receive_batch: { supplier: { name: { contains: supplier.trim(), mode: 'insensitive' } } } } },
+        { receive_header: { receive_batch: { donor_name: { contains: supplier.trim(), mode: 'insensitive' } } } },
+      ],
+    });
+  }
+
+  if (search && search.trim()) {
+    conditions.push({
+      OR: [
+        { items: { name: { contains: search.trim(), mode: 'insensitive' } } },
+        { items: { code: { contains: search.trim(), mode: 'insensitive' } } },
+        { receive_header: { doc_no: { contains: search.trim(), mode: 'insensitive' } } },
+        { receive_header: { receive_batch: { batch_no: { contains: search.trim(), mode: 'insensitive' } } } },
+      ],
+    });
+  }
+
+  const where = conditions.length > 0 ? { AND: conditions } : {};
+
+  const { total, rows } = await repo.findReceiveReportData({ skip, limit, where });
+
+  return {
+    items: rows.map(r => {
+      const batch = r.receive_header?.receive_batch;
+      return {
+        id:           r.id,
+        receiveDate:  toISODate(batch?.receive_date),
+        batchNo:      batch?.batch_no || '-',
+        docNo:        r.receive_header?.doc_no || '-',
+        type:         r.receive_header?.type || '-',
+        supplier:     batch?.supplier?.name || batch?.donor_name || '-',
+        itemCode:     r.items?.code || '-',
+        itemName:     r.items?.name || '-',
+        unit:         r.items?.unit?.name || '-',
+        expectedQty:  safeNumber(r.expected_qty),
+        qty:          safeNumber(r.qty),
+        costPrice:    safeNumber(r.cost_price),
+        lotCode:      r.lot_code || '-',
+      };
+    }),
+    total,
+    page,
+    limit,
+    totalPages: totalPages(total),
+  };
+};
+
 module.exports = {
   getStockBalanceReport,
   getLowStockReport,
@@ -472,4 +534,5 @@ module.exports = {
   getAssetReport,
   getNearExpiryReport,
   getInventoryBalanceSummary,
+  getReceiveReportData,
 };

@@ -133,8 +133,26 @@ const updateBorrowerDocument = async (id, data) => {
     return prisma.borrower_details.update({ where: { id }, data });
 };
 
-const createReturnLog = async (data, tx = prisma) => {
-    return tx.return_log.create({ data });
+const selectLatestReturnSubmissionLog = async (docNo, tx = prisma) => {
+    const code = (docNo || '').toString();
+    if (!code) return null;
+    return tx.logs_transaction.findFirst({
+        where: {
+            module: 'WAREHOUSE',
+            action: 'SUBMIT_RETURN',
+            code,
+        },
+        orderBy: { created_at: 'desc' },
+        select: {
+            id: true,
+            action: true,
+            code: true,
+            description: true,
+            created_at: true,
+            created_by: true,
+            created_by_id: true,
+        },
+    });
 };
 
 const selectItemsForRequisition = async (itemIds = [], tx = prisma) => {
@@ -356,7 +374,7 @@ const SelectActiveBorrows = async () => {
     return prisma.requisition_header.findMany({
         where: {
             type: 'BORROW',
-            status: 'BORROWING',
+            status: { in: ['BORROWING', 'PENDING_RETURN_CHECK'] },
         },
         include: {
             // Join แผนกในหน้ารายการค้างคืน
@@ -382,7 +400,7 @@ module.exports = {
     createBorrowerDetails,
     getBorrowerById,
     updateBorrowerDocument,
-    createReturnLog,
+    selectLatestReturnSubmissionLog,
     selectItemsForRequisition,
     SelectRequisitionById,
     SelectAllRequisitions,

@@ -1,5 +1,6 @@
 const DTO = require('../dtos/reusableItem.dto');
 const reusableRepo = require('../repositories/reusableItem.repo');
+const stockMovementRepo = require('../repositories/stockmovement.repo');
 const { isAdmin, getUserDepartmentIds } = require('../utils/userAccess');
 
 const RECEIVE_STATUS = {
@@ -82,14 +83,14 @@ const enrichReturnRequestWithUnitDetails = async (mappedRequest, tx = null) => {
 
     const unitRows = await reusableRepo.selectUnitsByCodes(
         {
-            // แก้ไข: ใช้ department_id
             departmentId: mappedRequest.department_id,
             unitCodes: allCodes,
         },
         tx || undefined
     );
 
-    const unitByCode = new Map((unitRows || []).map((unit) => [unit.unit_code, unit]));
+    // Use lowercase keys for robust matching
+    const unitByCode = new Map((unitRows || []).map((unit) => [(unit.unit_code || '').toLowerCase(), unit]));
 
     return {
         ...mappedRequest,
@@ -100,7 +101,7 @@ const enrichReturnRequestWithUnitDetails = async (mappedRequest, tx = null) => {
                 ...item,
                 requested_unit_codes: requestedUnitCodes,
                 requested_units: requestedUnitCodes.map((code) => {
-                    const unit = unitByCode.get(code);
+                    const unit = unitByCode.get(code.toLowerCase());
                     return {
                         id: unit?.id || null,
                         unit_code: code,
@@ -136,6 +137,7 @@ const generateUnitCodes = async (count, tx) => {
 
 const createReusableReceive = async (data, userSession) => {
     const createdById = userSession?.sub || null;
+    const createdByName = userSession?.email || createdById || 'SYSTEM';
 
     return reusableRepo.withTransaction(async (tx) => {
         const header = await reusableRepo.createReceiveHeader(
@@ -172,7 +174,6 @@ const createReusableReceive = async (data, userSession) => {
                     item_id: item.item_id,
                     receive_item_id: receiveItemByItemId.get(item.item_id)?.id || null,
                     serial_no: unit.serial_no || null,
-                    // แก้ไข: เปลี่ยนจาก department เป็น department_id
                     department_id: unit.department_id ? Number(unit.department_id) : null,
                     status: (unit.status || DEFAULT_STATUS).toUpperCase(),
                     condition: (unit.condition || DEFAULT_CONDITION).toUpperCase(),
@@ -198,6 +199,26 @@ const createReusableReceive = async (data, userSession) => {
         }));
 
         await reusableRepo.createReusableUnits(unitsPayload, tx);
+
+        for (const item of data.items) {
+            const qty = item.units.length;
+            if (qty > 0) {
+                const totalAfter = await reusableRepo.countTotalUnitsByItemId(item.item_id, tx);
+                const totalBefore = totalAfter - qty;
+
+                await stockMovementRepo.createStockMovement({
+                    item_id: item.item_id,
+                    lot_id: null,
+                    quantity: qty,
+                    type: 'RECEIVE_IN',
+                    note: `Reusable Receive IN: ${header.doc_no || ''}`,
+                    created_by: createdByName,
+                    created_by_id: createdById,
+                    balance_before: totalBefore, 
+                    balance_after: totalAfter,   
+                }, tx);
+            }
+        }
 
         return {
             receive_id: header.id,
@@ -227,7 +248,7 @@ const getReusableUnits = async (query = {}, userSession = null) => {
 
     const [items, total] = await reusableRepo.selectReusableUnits(resolvedQuery);
     const limit = resolvedQuery.limit || 10;
-    const page  = resolvedQuery.page  || 1;
+    const page = resolvedQuery.page || 1;
     const totalPages = Math.max(1, Math.ceil(total / limit));
 
     return {
@@ -306,6 +327,7 @@ const updateReusableUnit = async (id, data = {}, userSession = null) => {
 
 const returnReusableFromWithdraw = async (id, data = {}, userSession = null) => {
     const updatedById = userSession?.sub || null;
+    const updatedByName = userSession?.email || updatedById || 'SYSTEM';
     const conditionInput = (data.condition || 'GOOD').toString().trim().toUpperCase();
 
     return reusableRepo.withTransaction(async (tx) => {
@@ -336,7 +358,7 @@ const returnReusableFromWithdraw = async (id, data = {}, userSession = null) => 
             {
                 status: nextStatus,
                 condition: nextCondition === 'INCOMPLETE' ? 'DAMAGED' : nextCondition,
-                department_id: null, // คืนสต็อกกลาง department_id เป็น null
+                department_id: null,
                 ...(Object.prototype.hasOwnProperty.call(data, 'note') && { note: data.note || null }),
             },
             tx
@@ -355,9 +377,25 @@ const returnReusableFromWithdraw = async (id, data = {}, userSession = null) => 
             tx
         );
 
+        // Stock movement: RETURN_IN (1 unit returned to stock)
+        const totalAfter = await reusableRepo.countTotalUnitsByItemId(existing.item_id, tx);
+        const totalBefore = totalAfter - 1;
+        await stockMovementRepo.createStockMovement({
+            item_id: existing.item_id,
+            lot_id: null,
+            quantity: 1,
+            type: 'RETURN_IN',
+            note: `Reusable Return IN (single): ${existing.unit_code}`,
+            created_by: updatedByName,
+            created_by_id: updatedById,
+            balance_before: totalBefore,
+            balance_after: totalAfter,
+        }, tx);
+
         return DTO.mapReusableUnitResponse(updated);
     });
 };
+
 
 const getReturnableWithdrawSummary = async (departmentId, tx = null) => {
     if (!departmentId) {
@@ -407,7 +445,7 @@ const createReturnRequest = async (payload = {}, userSession = null) => {
         const docNo = await generateReturnRequestDocNo(tx);
         const availableSummary = await getReturnableWithdrawSummary(departmentId, tx);
         const availableMap = new Map(availableSummary.items.map((item) => [item.item_id, item.in_use_qty]));
-        
+
         const pendingRows = await reusableRepo.sumPendingReturnRequestQtyByDepartment(
             {
                 departmentId: departmentId,
@@ -518,7 +556,7 @@ const getReturnRequests = async (query = {}, userSession = null) => {
 
     const [items, total] = await reusableRepo.selectReturnRequests(resolvedQuery);
     const limit = resolvedQuery.limit || 10;
-    const page  = resolvedQuery.page  || 1;
+    const page = resolvedQuery.page || 1;
     const totalPages = Math.max(1, Math.ceil(total / limit));
 
     return {
@@ -602,7 +640,7 @@ const processReturnRequest = async (id, payload = {}, userSession = null) => {
                 const row = unitResults[idx] || {};
                 const unitId = (row.unit_id || '').toString().trim();
                 const unit = withdrawUnitById.get(unitId);
-                
+
                 if (!unit) {
                     throw createHttpError(400, `unit_id ${unitId} not found in department withdraw stock`);
                 }
@@ -610,12 +648,15 @@ const processReturnRequest = async (id, payload = {}, userSession = null) => {
                 const requestedItemId = requestedCodeToItemId.get(unit.unit_code);
                 const nextCount = Number(selectedQtyByItem.get(unit.item_id) || 0) + 1;
                 const requestedQty = Number(requestedQtyByItem.get(unit.item_id) || 0);
-                
+
                 if (nextCount > requestedQty) {
                     throw createHttpError(400, `Exceeds requested_qty for item ${unit.item_id}`);
                 }
                 selectedQtyByItem.set(unit.item_id, nextCount);
             }
+
+            // Track return qty per item for stock movement
+            const returnedQtyByItem = new Map();
 
             for (const row of unitResults) {
                 const unitId = (row.unit_id || '').toString().trim();
@@ -645,8 +686,30 @@ const processReturnRequest = async (id, payload = {}, userSession = null) => {
                     },
                     tx
                 );
+
+                returnedQtyByItem.set(unit.item_id, (returnedQtyByItem.get(unit.item_id) || 0) + 1);
+            }
+
+            // Create stock movement for each returned item
+            const processedByName = userSession?.email || processedBy || 'SYSTEM';
+            for (const [itemId, qty] of returnedQtyByItem.entries()) {
+                const totalAfter = await reusableRepo.countTotalUnitsByItemId(itemId, tx);
+                const totalBefore = totalAfter - qty;
+                await stockMovementRepo.createStockMovement({
+                    item_id: itemId,
+                    lot_id: null,
+                    quantity: qty,
+                    type: 'RETURN_IN',
+                    note: `Reusable Return IN (unit): ${request.doc_no}`,
+                    created_by: processedByName,
+                    created_by_id: processedBy,
+                    balance_before: totalBefore,
+                    balance_after: totalAfter,
+                }, tx);
             }
         } else {
+            const returnedQtyByItem = new Map();
+
             for (const result of itemResults) {
                 const itemId = (result.item_id || '').toString().trim();
                 const returnQty = Number(result.return_qty);
@@ -685,7 +748,27 @@ const processReturnRequest = async (id, payload = {}, userSession = null) => {
                         },
                         tx
                     );
+
+                    returnedQtyByItem.set(itemId, (returnedQtyByItem.get(itemId) || 0) + 1);
                 }
+            }
+
+            // Create stock movement for each returned item
+            const processedByName = userSession?.email || processedBy || 'SYSTEM';
+            for (const [itemId, qty] of returnedQtyByItem.entries()) {
+                const totalAfter = await reusableRepo.countTotalUnitsByItemId(itemId, tx);
+                const totalBefore = totalAfter - qty;
+                await stockMovementRepo.createStockMovement({
+                    item_id: itemId,
+                    lot_id: null,
+                    quantity: qty,
+                    type: 'RETURN_IN',
+                    note: `Reusable Return IN (item): ${request.doc_no}`,
+                    created_by: processedByName,
+                    created_by_id: processedBy,
+                    balance_before: totalBefore,
+                    balance_after: totalAfter,
+                }, tx);
             }
         }
 
@@ -705,11 +788,11 @@ const resolveBarcode = async ({ value, departmentId = null } = {}) => {
     const key = (value || '').toString().trim();
     if (!key) throw createHttpError(400, 'value is required');
 
-    const unit = await reusableRepo.selectUnitByBarcodeValue({ 
-        value: key, 
-        departmentId: departmentId ? Number(departmentId) : null 
+    const unit = await reusableRepo.selectUnitByBarcodeValue({
+        value: key,
+        departmentId: departmentId ? Number(departmentId) : null
     });
-    
+
     if (unit) {
         return {
             type: 'UNIT',
@@ -727,7 +810,7 @@ const resolveBarcode = async ({ value, departmentId = null } = {}) => {
             },
         };
     }
-    
+
     const lot = await reusableRepo.selectLotByBarcodeValue({ value: key });
     if (lot) {
         return {

@@ -74,6 +74,7 @@ const SelectAllMovements = async ({ page = 1, limit = 10, keyword = '', type = '
                         image_url: true,
                         categories: { select: { id: true, name: true } },
                         unit: { select: { id: true, name: true } },
+                        type: true,
                     },
                 },
             },

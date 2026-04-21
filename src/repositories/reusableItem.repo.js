@@ -28,6 +28,15 @@ const unitInclude = {
 
 const returnRequestInclude = {
     departments: { select: { id: true, name: true } },
+    profiles: {
+        select: {
+            id: true,
+            firstname_th: true,
+            lastname_th: true,
+            firstname_en: true,
+            lastname_en: true,
+        },
+    },
     request_items: {
         select: {
             id: true,
@@ -123,6 +132,17 @@ const selectReusableUnits = async ({
         }),
         prisma.reusable_item_units.count({ where }),
     ]);
+};
+
+const countTotalUnitsByItemId = async (itemId, tx = prisma) => {
+    return await tx.reusable_item_units.count({
+        where: {
+            item_id: itemId,
+            status: { 
+                notIn: ['CANCELLED', 'DISPOSED'] 
+            }
+        }
+    });
 };
 
 const selectReusableUnitById = async (id, tx = prisma) => {
@@ -250,9 +270,8 @@ const selectReturnRequests = async ({
     if (keyword) {
         andConditions.push({
             OR: [
-                { doc_no:       { contains: keyword, mode: 'insensitive' } },
-                { contact_name: { contains: keyword, mode: 'insensitive' } },
-                { departments:  { name: { contains: keyword, mode: 'insensitive' } } },
+                { doc_no:      { contains: keyword, mode: 'insensitive' } },
+                { departments: { name: { contains: keyword, mode: 'insensitive' } } },
             ],
         });
     }
@@ -493,6 +512,7 @@ module.exports = {
     createReceiveHeader,
     createReceiveItems,
     selectReceiveItemsByHeader,
+    countTotalUnitsByItemId,
     countUnitsByYear,
     createReusableUnits,
     selectReusableUnits,

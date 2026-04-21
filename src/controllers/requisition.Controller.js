@@ -33,6 +33,12 @@ const parseRoles = (raw = '') => {
         .filter(Boolean);
 };
 
+const hasWarehouseAccess = (userSession) => {
+    const rawSystems = userSession?.systems || userSession?.app_metadata?.systems || [];
+    const systemNames = rawSystems.map((s) => (typeof s === 'string' ? s : (s?.name ?? '')));
+    return isAdmin(userSession) || systemNames.includes('Warehouse') || systemNames.includes('Administration');
+};
+
 const getWarehouseRecipientIds = async () => {
     const roles = parseRoles(process.env.ROLE_WAREHOUSE_GROUP || '');
     if (!roles.length) return [];
@@ -421,7 +427,7 @@ const getActiveBorrows = async (req, res) => {
     }
 };
 
-const processReturn = async (req, res) => {
+const submitReturn = async (req, res) => {
     try {
         const id = Number(req.params.id);
         if (!Number.isInteger(id) || id <= 0) {
@@ -444,7 +450,32 @@ const processReturn = async (req, res) => {
             }
         }
 
-        const result = await requisitionService.processReturn(id, returnItems, req.user || null);
+        const result = await requisitionService.submitReturn(id, returnItems, req.user || null);
+
+        // Notify warehouse staff that a return is pending verification
+        const actorId = req.user?.sub || null;
+        const warehouseRoles = parseRoles(process.env.ROLE_WAREHOUSE_GROUP || '');
+        const allWarehouseRecipients = await getWarehouseRecipientIds();
+        const warehouseRecipients = allWarehouseRecipients;
+        await safeCreateNotification({
+            actorId,
+            recipientIds: warehouseRecipients,
+            roleNames: warehouseRoles,
+            payload: {
+                type: 'BORROW_RETURN_SUBMITTED',
+                severity: 'INFO',
+                title: `มีรายการรอตรวจรับคืน: ${result?.doc_no || '-'}`,
+                body: 'ผู้ดำเนินเรื่องส่งคืนแล้ว รอคลังยืนยันการรับคืน',
+                entity_type: 'WAREHOUSE',
+                entity_id: String(result?.id || id),
+                entity_code: result?.doc_no || null,
+                metadata: {
+                    requisition_id: result?.id || id,
+                    doc_no: result?.doc_no || null,
+                    status: result?.status || null,
+                },
+            },
+        });
 
         const requesterId = result?.requester_id ? String(result.requester_id) : null;
         if (requesterId) {
@@ -455,7 +486,48 @@ const processReturn = async (req, res) => {
                     type: 'BORROW_RETURN_UPDATED',
                     severity: 'INFO',
                     title: `อัปเดตการคืน: ${result?.doc_no || '-'}`,
-                    body: result?.status === 'COMPLETED' ? 'รับคืนครบและปิดงานแล้ว' : 'มีการบันทึกรับคืนบางส่วน',
+                    body: 'ผู้ยืมส่งคืนแล้ว รอคลังตรวจรับคืน',
+                    entity_type: 'REQUEST_HISTORY',
+                    entity_id: String(result?.id || id),
+                    entity_code: result?.doc_no || null,
+                },
+            });
+        }
+
+        req.io.emit('REFRESH_DATA', 'REQUISITIONS');
+
+        return util.sendResponse(res, 200, 'submit return success', result);
+    } catch (error) {
+        if (error?.statusCode) {
+            return util.sendResponse(res, error.statusCode, error.message);
+        }
+        return util.sendResponse(res, 500, error.message || 'submit return failed');
+    }
+};
+
+const verifyReturn = async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) {
+            return util.sendResponse(res, 400, 'invalid borrow id');
+        }
+
+        if (!hasWarehouseAccess(req.user || null)) {
+            return util.sendResponse(res, 403, 'ไม่มีสิทธิ์ยืนยันการรับคืน');
+        }
+
+        const result = await requisitionService.verifyReturn(id, req.user || null);
+
+        const requesterId = result?.requester_id ? String(result.requester_id) : null;
+        if (requesterId) {
+            await safeCreateNotification({
+                actorId: req.user?.sub || null,
+                recipientIds: [requesterId],
+                payload: {
+                    type: 'BORROW_RETURN_VERIFIED',
+                    severity: 'INFO',
+                    title: `คลังตรวจรับคืน: ${result?.doc_no || '-'}`,
+                    body: result?.status === 'COMPLETED' ? 'คลังตรวจรับคืนครบและปิดงานแล้ว' : 'คลังตรวจรับคืนบางส่วนแล้ว',
                     entity_type: 'REQUEST_HISTORY',
                     entity_id: String(result?.id || id),
                     entity_code: result?.doc_no || null,
@@ -468,12 +540,12 @@ const processReturn = async (req, res) => {
         req.io.emit('REFRESH_DATA', 'ITEMS');
         req.io.emit('REFRESH_DATA', 'STOCK_MOVEMENTS');
 
-        return util.sendResponse(res, 200, 'process return success', result);
+        return util.sendResponse(res, 200, 'verify return success', result);
     } catch (error) {
         if (error?.statusCode) {
             return util.sendResponse(res, error.statusCode, error.message);
         }
-        return util.sendResponse(res, 500, error.message || 'process return failed');
+        return util.sendResponse(res, 500, error.message || 'verify return failed');
     }
 };
 
@@ -486,5 +558,6 @@ module.exports = {
     rejectRequisition,
     cancelRequisition,
     getActiveBorrows,
-    processReturn,
+    submitReturn,
+    verifyReturn,
 };

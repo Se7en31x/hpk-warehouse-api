@@ -81,11 +81,13 @@ const mapReturnRequestResponse = (request = {}) => ({
     id: request.id,
     doc_no: request.doc_no,
     department_id: request.department_id,
-    // แก้ไข: ดึงชื่อแผนกจาก Relation
     department_name: request.departments?.name || null, 
     preferred_pickup_at: request.preferred_pickup_at || null,
-    contact_name: request.contact_name || null,
-    contact_phone: request.contact_phone || null,
+    requested_by: request.requested_by || null,
+    requested_by_name: [
+        request.profiles?.firstname_th,
+        request.profiles?.lastname_th,
+    ].filter(Boolean).join(' ') || null,
     status: request.status,
     note: request.note || null,
     created_at: request.created_at,

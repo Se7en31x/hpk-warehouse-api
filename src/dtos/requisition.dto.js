@@ -42,6 +42,7 @@ const mapRequisitionListResponse = (data) => {
         type: data.type,
         status: data.status,
         request_date: data.request_date,
+        return_date: data.return_date || null,
         due_date: data.due_date || null,
         // แก้ไข: ดึงข้อมูลจาก Relation 'departments'
         department_id: data.department_id,

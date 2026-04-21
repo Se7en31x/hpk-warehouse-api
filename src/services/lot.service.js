@@ -177,12 +177,14 @@ const toggleLotStatus = async (lotId, user = {}) => {
     }
 
     const nextStatus = existingLot.status === LOT_STATUS.ACTIVE ? LOT_STATUS.SUSPENDED : LOT_STATUS.ACTIVE;
-    
+
     return lotRepo.withTransaction(async (tx) => {
         const data = {
             status: nextStatus,
         };
 
+        const currentStock = await stockMovementRepo.fetchItemCurrentStock(existingLot.item_id, tx);
+        
         await lotRepo.updateLot(lotId, data, tx);
 
         // Record the fact that the status changed in stock_movement. 
@@ -195,6 +197,8 @@ const toggleLotStatus = async (lotId, user = {}) => {
             note: `เปลี่ยนสถานะเป็น ${nextStatus}`,
             created_by: user.email || null,
             created_by_id: user.sub || null,
+            balance_before: currentStock,
+            balance_after: currentStock,
         }, tx);
 
         const updatedLot = await lotRepo.selectLotById(lotId, tx) || existingLot;

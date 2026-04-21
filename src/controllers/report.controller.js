@@ -114,6 +114,14 @@ const getInventoryBalanceSummary = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 
+const getReceiveReport = async (req, res, next) => {
+  try {
+    const { page, limit } = getPaginationParams(req.query);
+    const { dateFrom, dateTo, search, supplier } = req.query;
+    res.json(await service.getReceiveReportData({ page, limit, dateFrom, dateTo, search, supplier }));
+  } catch (e) { next(e); }
+};
+
 module.exports = {
   getStockBalanceReport,
   getLowStockReport,
@@ -127,4 +135,5 @@ module.exports = {
   getAssetReport,
   getNearExpiryReport,
   getInventoryBalanceSummary,
+  getReceiveReport,
 };

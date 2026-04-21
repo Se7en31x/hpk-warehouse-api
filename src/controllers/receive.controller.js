@@ -1,4 +1,5 @@
 const receiveService = require('../services/receive.service');
+const notificationService = require('../services/notification.service')
 const DTO = require('../dtos/receive.dto');
 const util = require('../utils/response');
 
@@ -26,6 +27,54 @@ const createBatch = async (req, res) => {
 
         const created = await receiveService.createBatch(data, req.user || null);
         req.io.emit('REFRESH_DATA', 'RECEIVES');
+
+        // --- Notification Logic (ใช้ Pattern เดียวกับ createItem) ---
+        try {
+            const warehouseRoles = (process.env.ROLE_WAREHOUSE_GROUP || 'WAREHOUSE,ADMIN').split(',').map(r => r.trim());
+            const recipientIds = await notificationService.getRecipientIdsByRoles(warehouseRoles);
+
+            if (recipientIds.length > 0) {
+                // 1. สร้างแจ้งเตือนลงฐานข้อมูล
+                const notifyResult = await notificationService.createNotificationSafely({
+                    actorId: req.user?.id || null,
+                    recipientIds,
+                    payload: {
+                        type: 'RECEIVE_BATCH',
+                        severity: 'INFO',
+                        title: '📦 มีพัสดุรับเข้าใหม่',
+                        body: `Batch: ${created.batch_no} โดย ${req.user?.name || 'เจ้าหน้าที่'} (${data.donor_name || 'จัดซื้อ'})`,
+                        entity_type: 'WAREHOUSE',
+                        entity_id: String(created.id),
+                        entity_code: created.batch_no,
+                        metadata: { batch_id: created.id }
+                    }
+                });
+
+                // 2. ส่ง Socket แยกรายคน (เพื่อให้เลขกระดิ่งหน้าบ้านเด้ง)
+                if (notifyResult && !notifyResult.deduped) {
+                    const actualRecipients = notifyResult.recipient_ids || recipientIds;
+                    actualRecipients.forEach((uid) => {
+                        // ใช้ฟังก์ชัน buildUserRoom (เช็คดูว่าพี่ประกาศไว้ที่ไหนนะครับ ปกติจะอยู่ใน util หรือ controller)
+                        const room = `user:${uid}`;
+                        req.io.emit('REFRESH_DATA', 'NOTIFICATIONS');
+
+                        // ส่งข้อมูลแจ้งเตือนใหม่ไปให้หน้าบ้านด้วย เพื่อให้ Toast ทำงาน
+                        req.io.to(room).emit('notification:new', {
+                            id: notifyResult.id || Date.now(),
+                            title: '📦 มีพัสดุรับเข้าใหม่',
+                            body: created.batch_no,
+                            type: 'RECEIVE_BATCH',      
+                            severity: 'INFO',           
+                            entity_type: 'WAREHOUSE',
+                            is_read: false,
+                            created_at: new Date().toISOString()
+                        });
+                    });
+                }
+            }
+        } catch (notifErr) {
+            console.error('[createBatch] Notification failed:', notifErr.message);
+        }
         return util.sendResponse(res, 201, 'create receive batch success', created);
     } catch (error) {
         if (error?.code === 'P2002') {

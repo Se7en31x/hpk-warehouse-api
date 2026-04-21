@@ -112,6 +112,18 @@ const updateAsset = async (id, data, tx = prisma) => {
     });
 };
 
+const countTotalAssetsByItemId = async (itemId, tx = prisma) => {
+    return await tx.medical_assets.count({
+        where: {
+            item_id: itemId,
+            status: { 
+                // ไม่นับพวกที่แทงจำหน่าย (Disposed) หรือพังจนใช้ไม่ได้ (Scrapped)
+                notIn: ['DISPOSED', 'SCRAPPED', 'CANCELLED'] 
+            }
+        }
+    });
+};
+
 /**
  * Returns the count of medical_assets grouped by item_id.
  * Used by the asset list page to show how many units are registered per item type.
@@ -134,4 +146,5 @@ module.exports = {
     selectAssetById,
     updateAsset,
     selectAssetCountsByItemIds,
+    countTotalAssetsByItemId,
 };

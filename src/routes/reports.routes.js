@@ -20,6 +20,7 @@ router.get('/reusable-items', ctrl.getReusableItemsReport);
 router.get('/assets', ctrl.getAssetReport);
 router.get('/near-expiry', ctrl.getNearExpiryReport);
 router.get('/inventory-balance', ctrl.getInventoryBalanceSummary);
+router.get('/receives', ctrl.getReceiveReport);
 
 module.exports = router;
 

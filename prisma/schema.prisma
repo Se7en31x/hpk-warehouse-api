@@ -242,8 +242,6 @@ model reusable_return_requests {
   doc_no              String                          @unique @db.VarChar(50)
   department_id       Int
   preferred_pickup_at DateTime?                       @db.Timestamptz(6)
-  contact_name        String?                         @db.VarChar(255)
-  contact_phone       String?                         @db.VarChar(50)
   note                String?
   status              String                          @default("REQUESTED") @db.VarChar(20)
   requested_by        String?                         @db.Uuid
@@ -251,6 +249,7 @@ model reusable_return_requests {
   updated_at          DateTime                        @default(now()) @updatedAt @db.Timestamptz(6)
   deleted_at          DateTime?                       @db.Timestamptz(6)
   request_items       reusable_return_request_items[]
+  profiles            profiles?                       @relation(fields: [requested_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_requester_id")
   departments         departments                     @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reusable_return_request_department")
 
   @@index([department_id], map: "idx_reusable_return_requests_department")
@@ -421,7 +420,7 @@ model reusable_item_units {
   movement_logs   reusable_item_unit_logs[]
   departments     departments?              @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_department")
   items           items                     @relation(fields: [item_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reusable_unit_item")
-  receive_item    receive_item?             @relation(fields: [receive_item_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reusable_unit_receive_item")
+  receive_item    receive_item?             @relation(fields: [receive_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_reusable_unit_receive_item")
 
   @@index([item_id], map: "idx_reusable_units_item_id")
   @@index([status], map: "idx_reusable_units_status")
@@ -973,42 +972,43 @@ model lookup_relative {
 }
 
 model profiles {
-  id                                                           String                    @id(map: "users_pkey") @db.Uuid
-  firstname_th                                                 String?                   @db.VarChar(255)
-  lastname_th                                                  String?                   @db.VarChar(255)
-  firstname_en                                                 String?                   @db.VarChar(255)
-  lastname_en                                                  String?                   @db.VarChar(255)
+  id                                                           String                     @id(map: "users_pkey") @db.Uuid
+  firstname_th                                                 String?                    @db.VarChar(255)
+  lastname_th                                                  String?                    @db.VarChar(255)
+  firstname_en                                                 String?                    @db.VarChar(255)
+  lastname_en                                                  String?                    @db.VarChar(255)
   sex_id                                                       Int?
-  birth_date                                                   DateTime?                 @db.Date
+  birth_date                                                   DateTime?                  @db.Date
   nationality                                                  Int?
   race                                                         Int?
   mstatus                                                      Int?
   occupation                                                   Int?
-  phone                                                        String?                   @db.VarChar(15)
+  phone                                                        String?                    @db.VarChar(15)
   current_maininscl                                            Int?
   subdistrict_code                                             Int?
   district_code                                                Int?
   province_code                                                Int?
   zip_code                                                     Int?
-  address_detail                                               String?                   @db.VarChar(255)
-  cid                                                          String?                   @db.VarChar(13)
-  profession_id                                                String?                   @db.VarChar(50)
-  title_code                                                   String?                   @db.VarChar(3)
-  status_                                                      String?                   @map("status ") @db.VarChar
-  created_at                                                   DateTime?                 @default(now()) @db.Timestamptz(6)
-  updated_at                                                   DateTime?                 @db.Timestamptz(6)
-  deleted_at                                                   DateTime?                 @db.Timestamptz(6)
-  department_id                                                Int[]                     @default([])
-  system_id                                                    Int[]                     @default([])
+  address_detail                                               String?                    @db.VarChar(255)
+  cid                                                          String?                    @db.VarChar(13)
+  profession_id                                                String?                    @db.VarChar(50)
+  title_code                                                   String?                    @db.VarChar(3)
+  status_                                                      String?                    @map("status ") @db.VarChar
+  created_at                                                   DateTime?                  @default(now()) @db.Timestamptz(6)
+  updated_at                                                   DateTime?                  @db.Timestamptz(6)
+  deleted_at                                                   DateTime?                  @db.Timestamptz(6)
+  department_id                                                Int[]                      @default([])
+  system_id                                                    Int[]                      @default([])
   role_id                                                      Int?
   notification_recipients                                      notification_recipients[]
-  notifications_created                                        notifications[]           @relation("notifications_created_by")
+  notifications_created                                        notifications[]            @relation("notifications_created_by")
   receive_batch                                                receive_batch[]
   receive_header                                               receive_header[]
-  requisition_header_requisition_header_approver_idToprofiles  requisition_header[]      @relation("requisition_header_approver_idToprofiles")
-  requisition_header_requisition_header_requester_idToprofiles requisition_header[]      @relation("requisition_header_requester_idToprofiles")
+  requisition_header_requisition_header_approver_idToprofiles  requisition_header[]       @relation("requisition_header_approver_idToprofiles")
+  requisition_header_requisition_header_requester_idToprofiles requisition_header[]       @relation("requisition_header_requester_idToprofiles")
   return_log                                                   return_log[]
-  users                                                        users                     @relation(fields: [id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  reusable_return_requests                                     reusable_return_requests[]
+  users                                                        users                      @relation(fields: [id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@schema("public")
 }
@@ -1222,6 +1222,13 @@ model receive_batch {
   @@index([receive_date], map: "idx_receive_batch_date")
   @@index([batch_no], map: "idx_receive_batch_no")
   @@schema("inventory")
+}
+
+model lookup_patient_types {
+  patient_type String @id @db.VarChar(5)
+  type         String
+
+  @@schema("public")
 }
 
 /// The underlying view does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.

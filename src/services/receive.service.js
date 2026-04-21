@@ -74,6 +74,22 @@ const createReceive = async (data, userSession) => {
                             tx
                         );
                     }
+
+                    if (qty > 0) {
+                        const totalAfter = await assetRepo.countTotalAssetsByItemId(ri.item_id, tx);
+                        const totalBefore = totalAfter - qty;
+                        await stockMovementRepo.createStockMovement({
+                            item_id: ri.item_id,
+                            lot_id: null,
+                            quantity: qty,
+                            type: 'RECEIVE_IN',
+                            note: `Asset Receive IN: ${header.doc_no || ''}`,
+                            created_by: createdByName,
+                            created_by_id: createdById,
+                            balance_before: totalBefore,
+                            balance_after: totalAfter,
+                        }, tx);
+                    }
                 }
             } else {
                 for (const item of receiveItemsPayload) {
@@ -277,7 +293,6 @@ const confirmReceive = async (headerId, itemsPayload = [], userSession = null) =
         }
 
         const matchedReceiveItemIds = new Set();
-        const backorderItems = [];
 
         for (const payloadItem of itemsPayload) {
             const payloadReceiveItemId = Number(payloadItem?.receive_item_id);
@@ -406,57 +421,10 @@ const confirmReceive = async (headerId, itemsPayload = [], userSession = null) =
                 }
             }
 
-            const missingQty = expectedQty - actualQty;
-            if (missingQty > 0) {
-                backorderItems.push({
-                    item_id: existingItem.item_id,
-                    expected_qty: missingQty,
-                    qty: 0,
-                    lot_code: null,
-                    cost_price:
-                        existingItem.cost_price !== null && existingItem.cost_price !== undefined
-                            ? Number(existingItem.cost_price)
-                            : 0,
-                    expired_at: null,
-                });
-            }
         }
 
         if (matchedReceiveItemIds.size !== existingItems.length) {
             throw createHttpError(400, 'itemsPayload must include all receive items in this document');
-        }
-
-        if (backorderItems.length > 0 && currentHeader.type !== ASSET_TYPE) {
-            const baseBackorderDocNo = `${currentHeader.doc_no}-B`;
-            const existingBackorderCount = await tx.receive_header.count({
-                where: {
-                    OR: [
-                        { doc_no: baseBackorderDocNo },
-                        { doc_no: { startsWith: `${baseBackorderDocNo}-` } },
-                    ],
-                },
-            });
-
-            const backorderDocNo =
-                existingBackorderCount === 0
-                    ? baseBackorderDocNo
-                    : `${baseBackorderDocNo}-${String(existingBackorderCount + 1)}`;
-
-            const backorderHeader = await receiveRepo.createReceiveHeader(
-                {
-                    doc_no: backorderDocNo,
-                    type: currentHeader.type,
-                    status: RECEIVE_STATUS.PENDING,
-                    note: `Auto-generated backorder from ${currentHeader.doc_no}`,
-                    created_by: updatedById,
-                    parent_id: currentHeader.id,
-                    batch_id: currentHeader.batch_id,
-                },
-                tx
-            );
-
-            const backorderItemsPayload = DTO.createReceiveItemsDTO(backorderItems, backorderHeader.id);
-            await receiveRepo.createReceiveItems(backorderItemsPayload, tx);
         }
 
         await receiveRepo.updateReceiveHeader(

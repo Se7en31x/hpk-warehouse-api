@@ -135,6 +135,13 @@ const SelectReceiveById = async (id, tx = prisma) => {
     });
 };
 
+const selectReceiveItemsByHeader = async (headerId, tx = prisma) => {
+    return tx.receive_item.findMany({
+        where: { header_id: Number(headerId) },
+        select: { id: true, item_id: true },
+    });
+};
+
 module.exports = {
     withTransaction,
     createReceiveBatch,
@@ -144,4 +151,5 @@ module.exports = {
     createReceiveItems,
     updateReceiveHeader,
     SelectReceiveById,
+    selectReceiveItemsByHeader,
 };

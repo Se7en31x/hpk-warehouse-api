@@ -511,8 +511,6 @@ const createReturnRequest = async (payload = {}, userSession = null) => {
                 doc_no: docNo,
                 department_id: departmentId, // แก้ไข: FK department_id
                 preferred_pickup_at: payload.preferred_pickup_at ? new Date(payload.preferred_pickup_at) : null,
-                contact_name: payload.contact_name || null,
-                contact_phone: payload.contact_phone || null,
                 note: payload.note || null,
                 status: RETURN_REQUEST_STATUS.REQUESTED,
                 requested_by: requestedBy,

@@ -43,7 +43,14 @@ const returnRequestInclude = {
             item_id: true,
             requested_qty: true,
             note: true,
-            items: { select: { id: true, code: true, name: true } },
+            items: {
+                select: {
+                    id: true,
+                    code: true,
+                    name: true,
+                    categories: { select: { name: true } },
+                },
+            },
         },
         orderBy: [{ id: 'asc' }],
     },
@@ -198,6 +205,11 @@ const selectInUseUnitsByDepartment = async (departmentId, tx = prisma) => {
                     id: true,
                     code: true,
                     name: true,
+                    categories: {
+                        select: {
+                            name: true,
+                        },
+                    },
                 },
             },
         },

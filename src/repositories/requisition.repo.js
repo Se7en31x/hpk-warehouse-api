@@ -268,12 +268,20 @@ const createLogTransaction = async (logData, tx = prisma) => {
 
 // --- Stock Operations ---
 const getItemLots = async (itemId, tx = prisma) => {
+    const now = new Date();
     return tx.item_lots.findMany({
         where: {
             item_id: itemId,
             quantity: { gt: 0 },
             status: 'ACTIVE',
             deleted_at: null,
+            // ไม่รวมล็อตที่หมดอายุแล้ว (ยังรวมล็อตที่ไม่กำหนดวันหมดอายุ: expired_at = null)
+            NOT: {
+                AND: [
+                    { expired_at: { not: null } },
+                    { expired_at: { lt: now } },
+                ],
+            },
         },
         orderBy: [
             { expired_at: 'asc' }, 

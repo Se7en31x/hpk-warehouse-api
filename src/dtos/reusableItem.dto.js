@@ -97,6 +97,7 @@ const mapReturnRequestResponse = (request = {}) => ({
         item_id: item.item_id,
         item_code: item.items?.code || null,
         item_name: item.items?.name || null,
+        category_name: item.items?.categories?.name || null,
         requested_qty: item.requested_qty,
         note: item.note || null,
         requested_unit_codes: parseRequestedUnitCodes(item.note),

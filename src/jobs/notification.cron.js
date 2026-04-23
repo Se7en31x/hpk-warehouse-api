@@ -1,5 +1,6 @@
 const cron = require('node-cron');
 const dayjs = require('dayjs');
+const lotRepo = require('../repositories/lot.repo');
 const notificationService = require('../services/notification.service');
 const { getIO, buildUserRoom } = require('../utils/socket');
 
@@ -94,6 +95,12 @@ const safeCreate = async ({ actorId = null, recipientIds = [], payload }) => {
 };
 
 const runExpiringLotsJob = async () => {
+  try {
+    await lotRepo.suspendExpiredActiveLots();
+  } catch (e) {
+    console.error('[notification-cron] suspendExpiredActiveLots:', e?.message || e);
+  }
+
   const recipients = await getWarehouseRecipientIds();
   if (!recipients.length) return;
 

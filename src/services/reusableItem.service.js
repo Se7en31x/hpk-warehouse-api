@@ -414,6 +414,7 @@ const getReturnableWithdrawSummary = async (departmentId, tx = null) => {
                 item_id: unit.item_id,
                 item_code: unit.items?.code || null,
                 item_name: unit.items?.name || null,
+                category_name: unit.items?.categories?.name || null,
                 in_use_qty: 0,
             });
         }

@@ -58,14 +58,15 @@ BEGIN
         v_current_stock := 0;
 
     ELSE
-        -- Consumables are stock-on-hand from active lots.
+        -- Consumables: active lots only, excluding expired lots (ยอดลดตามล็อตหมดอายุ).
         SELECT COALESCE(SUM(l.quantity), 0)::integer
         INTO v_current_stock
         FROM inventory.item_lots l
         WHERE l.item_id = p_item_id
           AND l.status = 'ACTIVE'
           AND l.quantity > 0
-          AND l.deleted_at IS NULL;
+          AND l.deleted_at IS NULL
+          AND (l.expired_at IS NULL OR l.expired_at > now());
     END IF;
 
     UPDATE inventory.items

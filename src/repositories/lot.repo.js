@@ -114,7 +114,7 @@ const selectAllLot = ({ page = 1, limit = 10, keyword = '', warehouse_id = '', c
         prisma.item_lots.findMany({
             where,
             select: lotSelect,
-            orderBy: [{ expired_at: 'asc' }, { created_at: 'desc' }],
+            orderBy: { created_at: 'desc' },
             skip,
             take: limit,
         }),
@@ -214,6 +214,19 @@ const withTransaction = async (callback) => {
     return prisma.$transaction((tx) => callback(tx));
 };
 
+/** ล็อตที่หมดอายุแล้วแต่ยัง ACTIVE → ระงับอัตโนมัติ (ไม่บันทึก stock_movement) */
+const suspendExpiredActiveLots = async () => {
+    const now = new Date();
+    return prisma.item_lots.updateMany({
+        where: {
+            deleted_at: null,
+            status: 'ACTIVE',
+            expired_at: { not: null, lt: now },
+        },
+        data: { status: 'SUSPENDED', updated_at: new Date() },
+    });
+};
+
 module.exports = {
     selectAllLot,
     selectLotById,
@@ -223,4 +236,5 @@ module.exports = {
     decrementLotQuantitySafe,
     updateLot,
     withTransaction,
+    suspendExpiredActiveLots,
 };

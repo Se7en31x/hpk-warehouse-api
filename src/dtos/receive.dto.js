@@ -118,18 +118,31 @@ const listBatchesQueryDTO = (query = {}) => ({
 
 // ── Response Mappers ───────────────────────────────────────────────────────────
 
-const mapReceiveItemResponse = (item = {}) => ({
-    id: item.id,
-    header_id: item.header_id,
-    item_id: item.item_id,
-    item_code: item.items?.code || null,
-    item_name: item.items?.name || null,
-    lot_code: item.lot_code,
-    expected_qty: item.expected_qty,
-    qty: item.qty,
-    cost_price: item.cost_price,
-    expired_at: item.expired_at,
-});
+const formatProfileDisplayName = (p) => {
+    if (!p) return null;
+    const th = [p.firstname_th, p.lastname_th].filter(Boolean).join(' ').trim();
+    if (th) return th;
+    const en = [p.firstname_en, p.lastname_en].filter(Boolean).join(' ').trim();
+    return en || null;
+};
+
+const mapReceiveItemResponse = (item = {}) => {
+    const categoryName = item.items?.categories?.name || null;
+    return {
+        id: item.id,
+        header_id: item.header_id,
+        item_id: item.item_id,
+        item_code: item.items?.code || null,
+        item_name: item.items?.name || null,
+        category: categoryName,
+        category_name: categoryName,
+        lot_code: item.lot_code,
+        expected_qty: item.expected_qty,
+        qty: item.qty,
+        cost_price: item.cost_price,
+        expired_at: item.expired_at,
+    };
+};
 
 const mapReceiveBatchHeaderResponse = (header = {}) => ({
     id: header.id,
@@ -156,6 +169,7 @@ const mapReceiveBatchResponse = (batch = {}) => ({
     receive_date: batch.receive_date,
     note: batch.note,
     created_by: batch.created_by,
+    created_by_name: formatProfileDisplayName(batch.profiles) || null,
     created_at: batch.created_at,
     updated_at: batch.updated_at,
     headers: Array.isArray(batch.receive_header)

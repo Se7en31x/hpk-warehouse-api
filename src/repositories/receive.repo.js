@@ -45,13 +45,30 @@ const buildBatchWhere = ({ keyword = '', type = '', status = '', start_date = ''
     return conditions.length > 0 ? { AND: conditions } : {};
 };
 
+const receiveItemItemsInclude = {
+    select: {
+        id: true,
+        code: true,
+        name: true,
+        categories: { select: { name: true } },
+    },
+};
+
 const batchInclude = {
     supplier: { select: { id: true, name: true } },
+    profiles: {
+        select: {
+            firstname_th: true,
+            lastname_th: true,
+            firstname_en: true,
+            lastname_en: true,
+        },
+    },
     receive_header: {
         include: {
             receive_item: {
                 include: {
-                    items: { select: { id: true, code: true, name: true } },
+                    items: receiveItemItemsInclude,
                 },
                 orderBy: { id: 'asc' },
             },
@@ -128,7 +145,7 @@ const SelectReceiveById = async (id, tx = prisma) => {
         include: {
             receive_item: {
                 include: {
-                    items: { select: { id: true, code: true, name: true } },
+                    items: receiveItemItemsInclude,
                 },
             },
         },

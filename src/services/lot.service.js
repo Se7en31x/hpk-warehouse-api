@@ -15,6 +15,8 @@ const getAllLots = async (query) => {
     const end_date = (query.end_date || '').toString().trim();
     const expiry_days = (query.expiry_days || '').toString().trim();
 
+    await lotRepo.suspendExpiredActiveLots();
+
     const [items, total] = await lotRepo.selectAllLot({
         page,
         limit,
@@ -42,6 +44,7 @@ const getAllLots = async (query) => {
 }
 
 const getLotById = async (id) => {
+    await lotRepo.suspendExpiredActiveLots();
     const lot = await lotRepo.selectLotById(id);
     if (!lot) return null;
 
@@ -56,6 +59,7 @@ const getLotById = async (id) => {
 const resolveNote = (payload = {}) => payload.note || null;
 
 const adjustLotStock = async (lotId, payload, user = {}) => {
+    await lotRepo.suspendExpiredActiveLots();
     const existingLot = await lotRepo.selectLotById(lotId);
     if (!existingLot) throw new Error("Lot id not found");
 
@@ -169,6 +173,7 @@ const deleteLot = async (lotId, user = {}) => {
 }
 
 const toggleLotStatus = async (lotId, user = {}) => {
+    await lotRepo.suspendExpiredActiveLots();
     const existingLot = await lotRepo.selectLotById(lotId);
     if (!existingLot) throw new Error("Lot id not found");
 
@@ -176,7 +181,16 @@ const toggleLotStatus = async (lotId, user = {}) => {
         throw new Error("Cannot toggle status of a CANCELLED (deleted) lot");
     }
 
+    const now = new Date();
+    const isExpired =
+        existingLot.expired_at != null && !Number.isNaN(new Date(existingLot.expired_at).getTime()) &&
+        new Date(existingLot.expired_at) < now;
+
     const nextStatus = existingLot.status === LOT_STATUS.ACTIVE ? LOT_STATUS.SUSPENDED : LOT_STATUS.ACTIVE;
+
+    if (nextStatus === LOT_STATUS.ACTIVE && isExpired) {
+        throw new Error('ไม่สามารถเปิดใช้งานล็อตที่หมดอายุแล้ว กรุณาปรับวันหมดอายุให้ยังไม่ถึงกำหนดก่อน');
+    }
 
     return lotRepo.withTransaction(async (tx) => {
         const data = {

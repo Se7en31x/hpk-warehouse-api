@@ -1,4 +1,5 @@
 const itemRepo = require('../repositories/item.repo')
+const lotRepo = require('../repositories/lot.repo')
 const DTO = require('../dtos/item.dto')
 const { uploadToCloudinary } = require('../middleware/upload')
 
@@ -11,6 +12,7 @@ const normalizeItemType = (value) => {
 };
 
 const getAllItems = async ({ page = 1, limit = 10, keyword = '', start_date = '', end_date = '', type = '', allowed_req, allowed_borrow } = {}) => {
+    await lotRepo.suspendExpiredActiveLots();
     const [items, total] = await itemRepo.SelectAllItems({
         page, limit, keyword, start_date, end_date, type, allowed_req, allowed_borrow,
     });
@@ -49,6 +51,7 @@ const getAllItems = async ({ page = 1, limit = 10, keyword = '', start_date = ''
 }
 
 const getItemById = async (id) => {
+    await lotRepo.suspendExpiredActiveLots();
     const item = await itemRepo.SelectItemById(id);
     if (!item) throw new Error("Item id not found");
     return item

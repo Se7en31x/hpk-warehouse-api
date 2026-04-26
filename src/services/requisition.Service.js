@@ -351,7 +351,6 @@ const approveRequisition = async (headerId, itemsToIssue, userSession) => {
                         unit.id,
                         {
                             status: 'IN_USE',
-                            // แก้ไข: ใช้ department_id (Int) แทนฟิลด์ชื่อแผนก
                             department_id: header.department_id || unit.department_id || null,
                             updated_at: new Date(),
                         },
@@ -786,7 +785,10 @@ const verifyReturn = async (headerId, userSession) => {
             await requisitionRepo.updateHeaderStatus(headerId, REQ_STATUS.BORROWING, null, tx);
         }
 
-        return DTO.mapRequisitionDetailResponse(await requisitionRepo.SelectRequisitionById(headerId, tx));
+        const mapped = DTO.mapRequisitionDetailResponse(await requisitionRepo.SelectRequisitionById(headerId, tx));
+        // expose the items verified in this transaction so the controller can build notifications
+        mapped._returnedItems = submittedItems;
+        return mapped;
     });
 };
 

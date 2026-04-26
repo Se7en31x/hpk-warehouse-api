@@ -152,6 +152,7 @@ const mapReceiveBatchHeaderResponse = (header = {}) => ({
     note: header.note,
     batch_id: header.batch_id,
     created_by: header.created_by,
+    created_by_name: null,
     created_at: header.created_at,
     updated_at: header.updated_at,
     receive_item: Array.isArray(header.receive_item)

@@ -62,18 +62,19 @@ const emitNotificationRefresh = (recipientIds = []) => {
 const emitNotificationNew = (recipientIds = [], roleNames = [], notifData) => {
     try {
         const io = getIO();
-        console.log('🚀 Sending Socket Notification to Warehouse Staff:', notifData.title);
-
-        // Emit to individual USER rooms
         const ids = Array.from(new Set((recipientIds || []).filter(Boolean)));
-        ids.forEach((uid) => io.to(buildUserRoom(uid)).emit('notification:new', notifData));
 
-        // Also emit to ROLE rooms so users whose IDs weren't resolved still receive it
-        const roles = Array.from(new Set((roleNames || []).filter(Boolean)));
-        roles.forEach((role) => {
-            console.log(`[Socket] Emitting notification:new to ROLE:${role}`);
-            io.to(buildRoleRoom(role)).emit('notification:new', notifData);
-        });
+        if (ids.length) {
+            // Emit only to resolved user rooms to avoid double-delivery for users who
+            // are also in a ROLE room.
+            ids.forEach((uid) => io.to(buildUserRoom(uid)).emit('notification:new', notifData));
+        } else {
+            // Fallback: no user IDs resolved — broadcast to role rooms instead.
+            const roles = Array.from(new Set((roleNames || []).filter(Boolean)));
+            roles.forEach((role) => {
+                io.to(buildRoleRoom(role)).emit('notification:new', notifData);
+            });
+        }
     } catch (e) {
         console.error('[Socket] emitNotificationNew failed:', e.message);
     }
@@ -266,6 +267,7 @@ const approveRequisition = async (req, res) => {
 
         const result = await requisitionService.approveRequisition(id, itemsToIssue, req.user || null);
 
+        // Notification → requester
         const requesterId = result?.requester_id ? String(result.requester_id) : null;
         if (requesterId) {
             const title = result?.type === REQ_TYPES.WITHDRAW
@@ -286,6 +288,27 @@ const approveRequisition = async (req, res) => {
                 },
             });
         }
+
+        // Notification → warehouse staff: STOCK_OUT
+        const warehouseRecipientIds = await getWarehouseRecipientIds();
+        console.log('[approveRequisition] STOCK_OUT recipients:', warehouseRecipientIds, '| env:', process.env.ROLE_WAREHOUSE_GROUP);
+        const issuedItems = (result?.items || []).filter(i => Number(i.issued || 0) > 0);
+        const uniqueItemCount = issuedItems.length;
+        const totalQty = issuedItems.reduce((sum, i) => sum + Number(i.issued || 0), 0);
+
+        await safeCreateNotification({
+            actorId: req.user?.sub || null,
+            recipientIds: warehouseRecipientIds,
+            payload: {
+                type: 'STOCK_OUT',
+                severity: 'INFO',
+                title: `มีการตัดสต็อกสินค้าออกจากคลัง`,
+                body: `คำขอเลขที่ ${result?.doc_no || '-'} ได้รับการอนุมัติแล้ว มีการนำสินค้าออกทั้งหมด ${uniqueItemCount} รายการ รวมจำนวน ${totalQty} ชิ้น`,
+                entity_type: 'WAREHOUSE',
+                entity_id: String(result?.id || id),
+                entity_code: result?.doc_no || null,
+            },
+        });
 
         req.io.emit('REFRESH_DATA', 'REQUISITIONS');
         req.io.emit('REFRESH_DATA', 'LOTS');
@@ -518,6 +541,12 @@ const verifyReturn = async (req, res) => {
 
         const result = await requisitionService.verifyReturn(id, req.user || null);
 
+        // คำนวณจำนวนที่รับคืนในรอบนี้จาก submittedItems ที่ service ส่งกลับ
+        const returnedItems = (result._returnedItems || []).filter(i => Number(i.qty_returned) > 0);
+        const uniqueReturnCount = returnedItems.length;
+        const totalReturnQty = returnedItems.reduce((sum, i) => sum + Number(i.qty_returned || 0), 0);
+
+        // Notify requester
         const requesterId = result?.requester_id ? String(result.requester_id) : null;
         if (requesterId) {
             await safeCreateNotification({
@@ -529,6 +558,24 @@ const verifyReturn = async (req, res) => {
                     title: `คลังตรวจรับคืน: ${result?.doc_no || '-'}`,
                     body: result?.status === 'COMPLETED' ? 'คลังตรวจรับคืนครบและปิดงานแล้ว' : 'คลังตรวจรับคืนบางส่วนแล้ว',
                     entity_type: 'REQUEST_HISTORY',
+                    entity_id: String(result?.id || id),
+                    entity_code: result?.doc_no || null,
+                },
+            });
+        }
+
+        // Notify warehouse — stock นำเข้าจากการคืน
+        if (uniqueReturnCount > 0) {
+            const warehouseRecipientIds = await getWarehouseRecipientIds();
+            await safeCreateNotification({
+                actorId: req.user?.sub || null,
+                recipientIds: warehouseRecipientIds,
+                payload: {
+                    type: 'STOCK_IN',
+                    severity: 'INFO',
+                    title: `รับคืนพัสดุเข้าคลัง: ${result?.doc_no || '-'}`,
+                    body: `ตรวจรับคืนแล้ว ${uniqueReturnCount} รายการ รวม ${totalReturnQty} ชิ้น`,
+                    entity_type: 'WAREHOUSE',
                     entity_id: String(result?.id || id),
                     entity_code: result?.doc_no || null,
                 },

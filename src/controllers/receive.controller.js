@@ -1,7 +1,33 @@
 const receiveService = require('../services/receive.service');
-const notificationService = require('../services/notification.service')
+const notificationService = require('../services/notification.service');
+const { getIO, buildUserRoom } = require('../utils/socket');
 const DTO = require('../dtos/receive.dto');
 const util = require('../utils/response');
+
+const WAREHOUSE_ROLES = () =>
+    (process.env.ROLE_WAREHOUSE_GROUP || '').split(',').map(r => r.trim()).filter(Boolean);
+
+const ACQ_LABEL = { PURCHASE: 'จัดซื้อ', DONATION: 'บริจาค' };
+
+async function sendReceiveNotification(actorId, recipientIds, payload) {
+    if (!recipientIds.length) return;
+    try {
+        const result = await notificationService.createNotificationSafely({ actorId, recipientIds, payload });
+        if (!result?.id || result?.deduped) return;
+        const io = getIO();
+        const notifData = {
+            id: result.id, recipient_row_id: null, is_read: false,
+            created_at: new Date().toISOString(), delivered_at: new Date().toISOString(), read_at: null,
+            ...payload,
+        };
+        recipientIds.forEach(uid => {
+            io.to(buildUserRoom(uid)).emit('REFRESH_DATA', 'NOTIFICATIONS');
+            io.to(buildUserRoom(uid)).emit('notification:new', notifData);
+        });
+    } catch (e) {
+        console.error('[receive notification] failed:', e.message);
+    }
+}
 
 const RECEIVE_STATUSES = {
     PENDING: 'PENDING',
@@ -27,54 +53,6 @@ const createBatch = async (req, res) => {
 
         const created = await receiveService.createBatch(data, req.user || null);
         req.io.emit('REFRESH_DATA', 'RECEIVES');
-
-        // --- Notification Logic (ใช้ Pattern เดียวกับ createItem) ---
-        try {
-            const warehouseRoles = (process.env.ROLE_WAREHOUSE_GROUP || 'WAREHOUSE,ADMIN').split(',').map(r => r.trim());
-            const recipientIds = await notificationService.getRecipientIdsByRoles(warehouseRoles);
-
-            if (recipientIds.length > 0) {
-                // 1. สร้างแจ้งเตือนลงฐานข้อมูล
-                const notifyResult = await notificationService.createNotificationSafely({
-                    actorId: req.user?.id || null,
-                    recipientIds,
-                    payload: {
-                        type: 'RECEIVE_BATCH',
-                        severity: 'INFO',
-                        title: '📦 มีพัสดุรับเข้าใหม่',
-                        body: `Batch: ${created.batch_no} โดย ${req.user?.name || 'เจ้าหน้าที่'} (${data.donor_name || 'จัดซื้อ'})`,
-                        entity_type: 'WAREHOUSE',
-                        entity_id: String(created.id),
-                        entity_code: created.batch_no,
-                        metadata: { batch_id: created.id }
-                    }
-                });
-
-                // 2. ส่ง Socket แยกรายคน (เพื่อให้เลขกระดิ่งหน้าบ้านเด้ง)
-                if (notifyResult && !notifyResult.deduped) {
-                    const actualRecipients = notifyResult.recipient_ids || recipientIds;
-                    actualRecipients.forEach((uid) => {
-                        // ใช้ฟังก์ชัน buildUserRoom (เช็คดูว่าพี่ประกาศไว้ที่ไหนนะครับ ปกติจะอยู่ใน util หรือ controller)
-                        const room = `user:${uid}`;
-                        req.io.emit('REFRESH_DATA', 'NOTIFICATIONS');
-
-                        // ส่งข้อมูลแจ้งเตือนใหม่ไปให้หน้าบ้านด้วย เพื่อให้ Toast ทำงาน
-                        req.io.to(room).emit('notification:new', {
-                            id: notifyResult.id || Date.now(),
-                            title: '📦 มีพัสดุรับเข้าใหม่',
-                            body: created.batch_no,
-                            type: 'RECEIVE_BATCH',      
-                            severity: 'INFO',           
-                            entity_type: 'WAREHOUSE',
-                            is_read: false,
-                            created_at: new Date().toISOString()
-                        });
-                    });
-                }
-            }
-        } catch (notifErr) {
-            console.error('[createBatch] Notification failed:', notifErr.message);
-        }
         return util.sendResponse(res, 201, 'create receive batch success', created);
     } catch (error) {
         if (error?.code === 'P2002') {
@@ -257,6 +235,42 @@ const confirmReceive = async (req, res) => {
     }
 };
 
+const notifyBatch = async (req, res) => {
+    try {
+        const batchId = Number(req.params.batchId);
+        if (!Number.isInteger(batchId) || batchId <= 0) {
+            return util.sendResponse(res, 400, 'invalid batch id');
+        }
+
+        const batch = await receiveService.getBatchById(batchId);
+        if (!batch) return util.sendResponse(res, 404, 'batch not found');
+
+        // รวม items ทุก header ใน batch (เฉพาะ qty > 0)
+        const allItems = (batch.headers || []).flatMap(h => h.receive_item || []);
+        const receivedItems = allItems.filter(i => Number(i.qty) > 0);
+        const uniqueItemCount = receivedItems.length;
+        const totalQty = receivedItems.reduce((sum, i) => sum + Number(i.qty), 0);
+
+        const recorderName = batch.created_by_name || req.user?.email || 'เจ้าหน้าที่';
+        const typeLabel = ACQ_LABEL[batch.acquisition_type] || 'จัดซื้อ';
+
+        const recipientIds = await notificationService.getRecipientIdsByRoles(WAREHOUSE_ROLES());
+        await sendReceiveNotification(req.user?.sub || null, recipientIds, {
+            type: 'STOCK_IN',
+            severity: 'INFO',
+            title: `รับพัสดุเข้าคลัง: ${batch.batch_no}`,
+            body: `โดย ${recorderName} — นำเข้า ${uniqueItemCount} รายการ รวม ${totalQty} ชิ้น (${typeLabel})`,
+            entity_type: 'WAREHOUSE',
+            entity_id: String(batch.id),
+            entity_code: batch.batch_no,
+        });
+
+        return util.sendResponse(res, 200, 'notify batch success');
+    } catch (error) {
+        return util.sendResponse(res, 500, error.message || 'notify batch failed');
+    }
+};
+
 module.exports = {
     createBatch,
     getBatchById,
@@ -264,4 +278,5 @@ module.exports = {
     createReceive,
     cancelReceive,
     confirmReceive,
+    notifyBatch,
 };

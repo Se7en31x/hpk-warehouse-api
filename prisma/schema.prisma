@@ -10,21 +10,6 @@ datasource db {
   schemas   = ["auth", "inventory", "public"]
 }
 
-model inventory_snapshot {
-  id           Int         @id @default(autoincrement())
-  date         DateTime    @db.Date
-  item_id      String?     @db.Uuid
-  warehouse_id String?     @db.Uuid
-  quantity     Int
-  avg_cost     Decimal?    @db.Decimal(10, 2)
-  items        items?      @relation(fields: [item_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "inventory_snapshot_item_fk")
-  warehouse    warehouses? @relation(fields: [warehouse_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "inventory_snapshot_warehouse_fk")
-
-  @@unique([date, item_id, warehouse_id], map: "inventory_snapshot_unique_idx")
-  @@index([date])
-  @@schema("inventory")
-}
-
 model item_allocation {
   id               Int               @id @default(autoincrement())
   req_item_id      Int?
@@ -58,7 +43,6 @@ model items {
   type                          String?                         @default("CONSUMABLE") @db.VarChar(20)
   allowed_req                   Boolean?                        @default(true)
   allowed_borrow                Boolean?                        @default(false)
-  inventory_snapshot            inventory_snapshot[]
   item_lots                     item_lots[]
   categories                    categories?                     @relation(fields: [category_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "items_category_fk")
   unit                          units?                          @relation(fields: [unit_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "items_unit_fk")
@@ -106,8 +90,8 @@ model requisition_header {
   updated_at                                         DateTime?          @default(now()) @updatedAt @db.Timestamptz(6)
   borrower_id                                        String?            @db.Uuid
   department_id                                      Int?
-  departments                                        departments?       @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_department")
   profiles_requisition_header_approver_idToprofiles  profiles?          @relation("requisition_header_approver_idToprofiles", fields: [approver_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_req_header_approver")
+  departments                                        departments?       @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_department")
   profiles_requisition_header_requester_idToprofiles profiles           @relation("requisition_header_requester_idToprofiles", fields: [requester_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_req_header_requester")
   borrower_details                                   borrower_details?  @relation(fields: [borrower_id], references: [id], onUpdate: NoAction, map: "fk_requisition_borrower")
   requisition_item                                   requisition_item[]
@@ -204,16 +188,15 @@ model units {
 }
 
 model warehouses {
-  id                 String               @id(map: "warehouse_pkey") @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name               String
-  location           String?
-  created_at         DateTime?            @default(now()) @db.Timestamptz(6)
-  updated_at         DateTime?            @default(now()) @updatedAt @db.Timestamptz(6)
-  description        String?
-  deleted_at         DateTime?            @db.Timestamptz(6)
-  inventory_snapshot inventory_snapshot[]
-  item_lots          item_lots[]
-  items              items[]
+  id          String      @id(map: "warehouse_pkey") @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  location    String?
+  created_at  DateTime?   @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime?   @default(now()) @updatedAt @db.Timestamptz(6)
+  description String?
+  deleted_at  DateTime?   @db.Timestamptz(6)
+  item_lots   item_lots[]
+  items       items[]
 
   @@schema("inventory")
 }
@@ -1008,7 +991,7 @@ model profiles {
   requisition_header_requisition_header_requester_idToprofiles requisition_header[]       @relation("requisition_header_requester_idToprofiles")
   return_log                                                   return_log[]
   reusable_return_requests                                     reusable_return_requests[]
-  users                                                        users                      @relation(fields: [id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                                                        users                      @relation(fields: [id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "users_id_fkey")
 
   @@schema("public")
 }
@@ -1160,23 +1143,6 @@ model asset_units {
   @@index([asset_id], map: "idx_asset_units_asset_id")
   @@index([department_id], map: "idx_asset_units_department_id")
   @@index([status], map: "idx_asset_units_status")
-  @@schema("inventory")
-}
-
-/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
-model barcode_registry {
-  id            BigInt   @id @default(autoincrement())
-  barcode_value String   @unique(map: "uq_barcode_registry_value") @db.VarChar(120)
-  entity_type   String   @db.VarChar(30)
-  entity_id     String   @db.VarChar(100)
-  is_primary    Boolean  @default(false)
-  is_active     Boolean  @default(true)
-  metadata      Json?
-  created_at    DateTime @default(now()) @db.Timestamptz(6)
-  updated_at    DateTime @default(now()) @db.Timestamptz(6)
-
-  @@index([is_active], map: "idx_barcode_registry_active")
-  @@index([entity_type, entity_id], map: "idx_barcode_registry_entity")
   @@schema("inventory")
 }
 

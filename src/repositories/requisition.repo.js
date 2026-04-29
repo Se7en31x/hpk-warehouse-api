@@ -200,6 +200,13 @@ const SelectRequisitionById = async (id, tx = prisma) => {
                             },
                         },
                     },
+                    item_allocation: {
+                        include: {
+                            item_lot: {
+                                select: { lot_code: true, expired_at: true }
+                            }
+                        }
+                    },
                 }
             },
             borrower_details: {
@@ -352,6 +359,46 @@ const updateHeaderStatus = async (id, status, approverId, tx = prisma, extraData
     });
 };
 
+// --- Traceability ---
+/**
+ * ดึง log การจ่ายครุภัณฑ์ (REUSABLE) ของ req_item หนึ่งๆ พร้อม unit_code และ serial_no
+ * ใช้สำหรับแสดงว่าจ่ายของรหัสไหนออกไปบ้าง
+ */
+const getIssuedReusableUnitsForReqItem = async (reqItemId, docNo, tx = prisma) => {
+    return (tx || prisma).reusable_item_unit_logs.findMany({
+        where: {
+            ref_doc_no: docNo,
+            note: { contains: `REQ_ITEM:${reqItemId}` },
+            action: { in: ['ISSUE_BORROW_REUSABLE', 'ISSUE_WITHDRAW_REUSABLE'] },
+        },
+        include: {
+            reusable_item_unit: {
+                select: { unit_code: true, serial_no: true }
+            }
+        },
+        orderBy: { created_at: 'asc' },
+    });
+};
+
+const selectOutstandingReusableUnitsForDocItem = async ({ itemId, docNo, reqItemId }, tx = prisma) => {
+    return (tx || prisma).reusable_item_units.findMany({
+        where: {
+            item_id: itemId,
+            status: 'IN_USE',
+            deleted_at: null,
+            movement_logs: {
+                some: {
+                    action: { in: ['ISSUE_BORROW_REUSABLE', 'ISSUE_WITHDRAW_REUSABLE'] },
+                    ref_doc_no: docNo,
+                    note: { contains: `REQ_ITEM:${reqItemId}` },
+                },
+            },
+        },
+        select: { id: true, unit_code: true, serial_no: true },
+        orderBy: [{ updated_at: 'asc' }, { created_at: 'asc' }],
+    });
+};
+
 // --- Return Management ---
 const SelectAllocationsForReqItem = async (reqItemId, tx = prisma) => {
     return tx.item_allocation.findMany({
@@ -424,4 +471,6 @@ module.exports = {
     SelectActiveBorrows,
     SelectAllocationsForReqItem,
     incrementLotQuantity,
+    getIssuedReusableUnitsForReqItem,
+    selectOutstandingReusableUnitsForDocItem,
 };

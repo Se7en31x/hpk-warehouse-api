@@ -265,6 +265,28 @@ const getRequisitionDetail = async (headerId) => {
                 unit_code: u.unit_code,
             }));
             item.available_lots = [];
+
+            // ดึงรหัสครุภัณฑ์ที่จ่ายออกแล้วจาก movement logs
+            const unitLogs = await requisitionRepo.getIssuedReusableUnitsForReqItem(item.id, mapped.doc_no);
+            item.issued_units = unitLogs
+                .map(log => ({
+                    id: log.unit_id,
+                    unit_code: log.reusable_item_unit?.unit_code || null,
+                    serial_no: log.reusable_item_unit?.serial_no || null,
+                }))
+                .filter(u => u.unit_code);
+
+            // ดึง outstanding units (ยังอยู่ในสถานะ IN_USE) สำหรับฟอร์มคืน
+            const outstandingUnits = await requisitionRepo.selectOutstandingReusableUnitsForDocItem({
+                itemId: item.item_id,
+                docNo: mapped.doc_no,
+                reqItemId: item.id,
+            });
+            item.outstanding_units = outstandingUnits.map(u => ({
+                id: u.id,
+                unit_code: u.unit_code,
+                serial_no: u.serial_no || null,
+            }));
         } else {
             const lots = await requisitionRepo.getItemLots(item.item_id);
             item.available_lots = lots.map(l => ({
@@ -579,7 +601,7 @@ const submitReturn = async (headerId, returnItems, userSession) => {
         const normalizedItems = [];
 
         for (const returnItem of returnItems) {
-            const { req_item_id, qty_returned, condition, note } = returnItem || {};
+            const { req_item_id, qty_returned, condition, note, units } = returnItem || {};
             const rItemId = Number(req_item_id);
             const qtyToReturn = Number(qty_returned);
             if (!Number.isInteger(rItemId) || rItemId <= 0) throw createHttpError(400, 'req_item_id ไม่ถูกต้อง');
@@ -591,12 +613,23 @@ const submitReturn = async (headerId, returnItems, userSession) => {
             const maxQty = (currentReqItem.issued_qty || 0) - (currentReqItem.returned_qty || 0);
             if (qtyToReturn > maxQty) throw createHttpError(400, `จำนวนคืนเกินค้างจ่าย`);
 
-            normalizedItems.push({
+            const normalizedEntry = {
                 req_item_id: rItemId,
                 qty_returned: qtyToReturn,
                 condition: (condition || 'GOOD').toString().trim().toUpperCase(),
                 note: (note || '').toString() || null,
-            });
+            };
+
+            // Preserve per-unit details for REUSABLE items so verifyReturn can process them
+            if (Array.isArray(units) && units.length > 0) {
+                normalizedEntry.units = units.map(u => ({
+                    unit_id: u.unit_id,
+                    condition: (u.condition || 'GOOD').toString().trim().toUpperCase(),
+                    note: (u.note || '').toString() || null,
+                }));
+            }
+
+            normalizedItems.push(normalizedEntry);
         }
 
         await requisitionRepo.createLogTransaction(
@@ -666,41 +699,66 @@ const verifyReturn = async (headerId, userSession) => {
             );
 
             if (itemType === ITEM_TYPE.REUSABLE) {
-                const targetUnits = await requisitionRepo.selectIssuedReusableUnitsForDocItem(
-                    {
-                        itemId: currentReqItem.item_id,
-                        docNo: header.doc_no,
-                        reqItemId: rItemId,
-                        limit: qtyToReturn,
-                    },
-                    tx
-                );
+                const perUnitDetails = Array.isArray(submitted.units) && submitted.units.length > 0
+                    ? submitted.units
+                    : null;
 
-                const nextUnitState = getReusableReturnState(condition || 'GOOD');
+                if (perUnitDetails) {
+                    // New path: process each specific unit with its own condition/note
+                    for (const unitDetail of perUnitDetails) {
+                        const unitId = String(unitDetail.unit_id || '');
+                        if (!unitId) continue;
+                        const unitCondition = (unitDetail.condition || 'GOOD').toString().toUpperCase();
+                        const unitNote = (unitDetail.note || '').toString() || null;
 
-                for (const unit of targetUnits) {
-                    await requisitionRepo.updateReusableUnitStatus(
-                        unit.id,
-                        {
-                            status: nextUnitState.status,
-                            condition: nextUnitState.condition,
-                            updated_at: new Date(),
-                        },
+                        const unit = await tx.reusable_item_units.findUnique({ where: { id: unitId } });
+                        if (!unit || unit.status !== 'IN_USE') continue;
+
+                        const nextUnitState = getReusableReturnState(unitCondition);
+                        await requisitionRepo.updateReusableUnitStatus(
+                            unit.id,
+                            { status: nextUnitState.status, condition: nextUnitState.condition, updated_at: new Date() },
+                            tx
+                        );
+                        await requisitionRepo.createReusableUnitLog(
+                            {
+                                unit_id: unit.id,
+                                action: 'VERIFY_RETURN_BORROW_REUSABLE',
+                                from_department_id: unit.department_id || null,
+                                to_department_id: unit.department_id || null,
+                                ref_doc_no: header.doc_no,
+                                note: `REQ_ITEM:${rItemId}${unitNote ? ` | ${unitNote}` : ''}`,
+                                performed_by: verifiedById,
+                            },
+                            tx
+                        );
+                    }
+                } else {
+                    // Old path: backward-compatible arbitrary selection
+                    const targetUnits = await requisitionRepo.selectIssuedReusableUnitsForDocItem(
+                        { itemId: currentReqItem.item_id, docNo: header.doc_no, reqItemId: rItemId, limit: qtyToReturn },
                         tx
                     );
-
-                    await requisitionRepo.createReusableUnitLog(
-                        {
-                            unit_id: unit.id,
-                            action: 'VERIFY_RETURN_BORROW_REUSABLE',
-                            from_department_id: unit.department_id || null,
-                            to_department_id: unit.department_id || null,
-                            ref_doc_no: header.doc_no,
-                            note: `REQ_ITEM:${rItemId}${userNote ? ` | ${userNote}` : ''}`,
-                            performed_by: verifiedById,
-                        },
-                        tx
-                    );
+                    const nextUnitState = getReusableReturnState(condition || 'GOOD');
+                    for (const unit of targetUnits) {
+                        await requisitionRepo.updateReusableUnitStatus(
+                            unit.id,
+                            { status: nextUnitState.status, condition: nextUnitState.condition, updated_at: new Date() },
+                            tx
+                        );
+                        await requisitionRepo.createReusableUnitLog(
+                            {
+                                unit_id: unit.id,
+                                action: 'VERIFY_RETURN_BORROW_REUSABLE',
+                                from_department_id: unit.department_id || null,
+                                to_department_id: unit.department_id || null,
+                                ref_doc_no: header.doc_no,
+                                note: `REQ_ITEM:${rItemId}${userNote ? ` | ${userNote}` : ''}`,
+                                performed_by: verifiedById,
+                            },
+                            tx
+                        );
+                    }
                 }
 
                 const retReusableBal = await stockMovementRepo.fetchItemCurrentStock(currentReqItem.item_id, tx);

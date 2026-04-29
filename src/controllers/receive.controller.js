@@ -258,7 +258,7 @@ const notifyBatch = async (req, res) => {
         await sendReceiveNotification(req.user?.sub || null, recipientIds, {
             type: 'STOCK_IN',
             severity: 'INFO',
-            title: `รับพัสดุเข้าคลัง: ${batch.batch_no}`,
+            title: `รับสินค้าเข้าคลัง: ${batch.batch_no}`,
             body: `โดย ${recorderName} — นำเข้า ${uniqueItemCount} รายการ รวม ${totalQty} ชิ้น (${typeLabel})`,
             entity_type: 'WAREHOUSE',
             entity_id: String(batch.id),

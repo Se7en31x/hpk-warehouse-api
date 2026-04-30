@@ -206,16 +206,29 @@ const createReusableReceive = async (data, userSession) => {
                 const totalAfter = await reusableRepo.countTotalUnitsByItemId(item.item_id, tx);
                 const totalBefore = totalAfter - qty;
 
+                const itemUnitCodes = unitsPayload
+                    .filter(u => u.item_id === item.item_id)
+                    .map(u => u.unit_code)
+                    .filter(Boolean)
+                    .join(', ');
+
+                const noteParts = [
+                    `[รับเข้า] ครุภัณฑ์ ${qty} ชิ้น`,
+                    `ใบ ${header.doc_no}`,
+                    itemUnitCodes || null,
+                    data.note ? `หมายเหตุ: ${data.note}` : null,
+                ];
+
                 await stockMovementRepo.createStockMovement({
                     item_id: item.item_id,
                     lot_id: null,
                     quantity: qty,
                     type: 'RECEIVE_IN',
-                    note: `Reusable Receive IN: ${header.doc_no || ''}`,
+                    note: noteParts.filter(Boolean).join(' | '),
                     created_by: createdByName,
                     created_by_id: createdById,
-                    balance_before: totalBefore, 
-                    balance_after: totalAfter,   
+                    balance_before: totalBefore,
+                    balance_after: totalAfter,
                 }, tx);
             }
         }

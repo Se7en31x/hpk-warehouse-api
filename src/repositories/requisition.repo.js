@@ -403,7 +403,11 @@ const selectOutstandingReusableUnitsForDocItem = async ({ itemId, docNo, reqItem
 const SelectAllocationsForReqItem = async (reqItemId, tx = prisma) => {
     return tx.item_allocation.findMany({
         where: { req_item_id: Number(reqItemId) },
-        select: { lot_id: true, qty: true },
+        select: {
+            lot_id: true,
+            qty: true,
+            item_lots: { select: { lot_code: true } },
+        },
     });
 };
 

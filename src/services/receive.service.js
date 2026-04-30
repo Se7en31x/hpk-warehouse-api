@@ -12,6 +12,19 @@ const RECEIVE_STATUS = {
 
 const ASSET_TYPE = 'PURCHASE_ASSET';
 
+/**
+ * สร้างเลขล็อตอัตโนมัติถ้าไม่มีส่งมา: {YYMMDD}-{4xBASE36}
+ * เช่น 250430-K3Z1
+ */
+const generateLotCode = (receiveDate) => {
+    const d = receiveDate ? new Date(receiveDate) : new Date();
+    const yy = String(d.getFullYear()).slice(-2);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const rand = Math.floor(Math.random() * 36 ** 4).toString(36).toUpperCase().padStart(4, '0');
+    return `${yy}${mm}${dd}-${rand}`;
+};
+
 const createHttpError = (statusCode, message) => {
     const error = new Error(message);
     error.statusCode = statusCode;
@@ -41,7 +54,13 @@ const createReceive = async (data, userSession) => {
         const headerPayload = DTO.createReceiveHeaderDTO(data, createdById);
         const header = await receiveRepo.createReceiveHeader(headerPayload, tx);
 
-        const receiveItemsPayload = DTO.createReceiveItemsDTO(data.items, header.id);
+        // Resolve lot_code ก่อน build payload — ถ้าไม่มีส่งมา generate ให้อัตโนมัติ
+        const itemsWithLot = (data.items || []).map((item) => ({
+            ...item,
+            lot_code: item.lot_code || generateLotCode(data.receive_date),
+        }));
+
+        const receiveItemsPayload = DTO.createReceiveItemsDTO(itemsWithLot, header.id);
         await receiveRepo.createReceiveItems(receiveItemsPayload, tx);
 
         if (header.status === RECEIVE_STATUS.COMPLETED) {
@@ -83,7 +102,7 @@ const createReceive = async (data, userSession) => {
                             lot_id: null,
                             quantity: qty,
                             type: 'RECEIVE_IN',
-                            note: `Asset Receive IN: ${header.doc_no || ''}`,
+                            note: `[รับเข้า] ครุภัณฑ์ ${qty} ชิ้น | ใบ ${header.doc_no || ''}`,
                             created_by: createdByName,
                             created_by_id: createdById,
                             balance_before: totalBefore,
@@ -362,13 +381,10 @@ const confirmReceive = async (headerId, itemsPayload = [], userSession = null) =
                     );
                 }
             } else {
-                const lotCode = payloadItem?.lot_code ? payloadItem.lot_code.toString().trim() : null;
-                if (actualQty > 0 && !lotCode) {
-                    throw createHttpError(
-                        400,
-                        `lot_code is required when actual qty is greater than 0 for item_id: ${existingItem.item_id}`
-                    );
-                }
+                // ถ้าไม่ส่ง lot_code มา → generate ให้อัตโนมัติ
+                const lotCode = payloadItem?.lot_code
+                    ? payloadItem.lot_code.toString().trim()
+                    : (actualQty > 0 ? generateLotCode(currentHeader.batch?.receive_date) : null);
 
                 const expiredAt = payloadItem?.expired_at ? new Date(payloadItem.expired_at) : null;
                 if (payloadItem?.expired_at && Number.isNaN(expiredAt.getTime())) {
@@ -408,7 +424,7 @@ const confirmReceive = async (headerId, itemsPayload = [], userSession = null) =
                     );
 
                     const stockMovementPayload = DTO.createStockMovementDTO(
-                        { item_id: existingItem.item_id, qty: actualQty },
+                        { item_id: existingItem.item_id, qty: actualQty, lot_code: lotCode },
                         currentHeader.doc_no,
                         updatedByName,
                         updatedById,

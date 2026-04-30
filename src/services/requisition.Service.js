@@ -53,6 +53,30 @@ const safeJsonParse = (raw) => {
     try { return JSON.parse(raw); } catch { return null; }
 };
 
+// ── Stock Movement Note Helpers ───────────────────────────────────────────────
+
+/**
+ * Label สำหรับแสดงชื่อสินค้าใน note: "MND001 ยา A" (code + name)
+ */
+const itemLabel = (reqItem) => {
+    const code = reqItem?.items?.code || '';
+    const name = reqItem?.items?.name || reqItem?.item_id || '';
+    return [code, name].filter(Boolean).join(' ');
+};
+
+/**
+ * ชื่อแผนก fallback เป็น "แผนก {id}"
+ */
+const deptLabel = (header) =>
+    header?.departments?.name || (header?.department_id ? `แผนก ${header.department_id}` : '');
+
+/**
+ * รวม parts ที่ไม่ว่างด้วย " | "
+ */
+const joinNote = (...parts) => parts.filter(Boolean).join(' | ');
+
+// ── End helpers ───────────────────────────────────────────────────────────────
+
 const buildSubmittedReturnLogNote = ({ note, submitted_by, submitted_by_id, submitted_at }) => {
     return JSON.stringify({
         state: 'SUBMITTED',
@@ -300,6 +324,12 @@ const getRequisitionDetail = async (headerId) => {
         }
     }
 
+    // ถ้ารอตรวจรับคืน — ดึง snapshot ที่ requester ส่งมา เพื่อแสดงสภาพ/จำนวน (read-only)
+    if (mapped.status === REQ_STATUS.PENDING_RETURN_CHECK) {
+        const log = await requisitionRepo.selectLatestReturnSubmissionLog(mapped.doc_no);
+        mapped.pending_return_submission = parseSubmitReturnPayload(log?.description || null) || null;
+    }
+
     return mapped;
 };
 
@@ -394,11 +424,18 @@ const approveRequisition = async (headerId, itemsToIssue, userSession) => {
                 }
 
                 const reusableBalBefore = await stockMovementRepo.fetchItemCurrentStock(currentReqItem.item_id, tx);
+                const reqTypeLabel = header.type === 'BORROW' ? 'ยืม' : 'เบิก';
+                const issuedUnitCodes = reusableUnits.map(u => u.unit_code).filter(Boolean).join(', ');
                 await stockMovementRepo.createStockMovement({
                     item_id: currentReqItem.item_id,
                     quantity: qtyNeeded,
                     type: 'OUT',
-                    note: `เบิกจ่ายพัสดุใช้ซ้ำตามใบงาน: ${header.doc_no}`,
+                    note: joinNote(
+                        `[${reqTypeLabel}] ${itemLabel(currentReqItem)} ${qtyNeeded} ชิ้น`,
+                        `ใบ ${header.doc_no}`,
+                        deptLabel(header),
+                        issuedUnitCodes || null,
+                    ),
                     created_by: approvedByName,
                     created_by_id: approvedById,
                     balance_before: reusableBalBefore,
@@ -444,7 +481,12 @@ const approveRequisition = async (headerId, itemsToIssue, userSession) => {
                         lot_id: lotToTake.id,
                         quantity: take,
                         type: "OUT",
-                        note: `เบิกจ่ายตามใบงาน (กำหนด Lot): ${header.doc_no}`,
+                        note: joinNote(
+                            `[เบิก] ${itemLabel(currentReqItem)} ${take} ชิ้น`,
+                            `ล็อต ${lotToTake.lot_code}`,
+                            `ใบ ${header.doc_no}`,
+                            deptLabel(header),
+                        ),
                         created_by: approvedByName,
                         created_by_id: approvedById,
                         balance_before: runningBal,
@@ -472,7 +514,12 @@ const approveRequisition = async (headerId, itemsToIssue, userSession) => {
                         lot_id: lot.id,
                         quantity: take,
                         type: "OUT",
-                        note: `เบิกจ่ายตามใบงาน: ${header.doc_no}`,
+                        note: joinNote(
+                            `[เบิก] ${itemLabel(currentReqItem)} ${take} ชิ้น`,
+                            `ล็อต ${lot.lot_code}`,
+                            `ใบ ${header.doc_no}`,
+                            deptLabel(header),
+                        ),
                         created_by: approvedByName,
                         created_by_id: approvedById,
                         balance_before: runningBal,
@@ -703,6 +750,8 @@ const verifyReturn = async (headerId, userSession) => {
                     ? submitted.units
                     : null;
 
+                const returnedUnitCodes = [];
+
                 if (perUnitDetails) {
                     // New path: process each specific unit with its own condition/note
                     for (const unitDetail of perUnitDetails) {
@@ -713,6 +762,8 @@ const verifyReturn = async (headerId, userSession) => {
 
                         const unit = await tx.reusable_item_units.findUnique({ where: { id: unitId } });
                         if (!unit || unit.status !== 'IN_USE') continue;
+
+                        if (unit.unit_code) returnedUnitCodes.push(unit.unit_code);
 
                         const nextUnitState = getReusableReturnState(unitCondition);
                         await requisitionRepo.updateReusableUnitStatus(
@@ -727,7 +778,7 @@ const verifyReturn = async (headerId, userSession) => {
                                 from_department_id: unit.department_id || null,
                                 to_department_id: unit.department_id || null,
                                 ref_doc_no: header.doc_no,
-                                note: `REQ_ITEM:${rItemId}${unitNote ? ` | ${unitNote}` : ''}`,
+                                note: joinNote(`REQ_ITEM:${rItemId}`, unitNote),
                                 performed_by: verifiedById,
                             },
                             tx
@@ -741,6 +792,7 @@ const verifyReturn = async (headerId, userSession) => {
                     );
                     const nextUnitState = getReusableReturnState(condition || 'GOOD');
                     for (const unit of targetUnits) {
+                        if (unit.unit_code) returnedUnitCodes.push(unit.unit_code);
                         await requisitionRepo.updateReusableUnitStatus(
                             unit.id,
                             { status: nextUnitState.status, condition: nextUnitState.condition, updated_at: new Date() },
@@ -753,7 +805,7 @@ const verifyReturn = async (headerId, userSession) => {
                                 from_department_id: unit.department_id || null,
                                 to_department_id: unit.department_id || null,
                                 ref_doc_no: header.doc_no,
-                                note: `REQ_ITEM:${rItemId}${userNote ? ` | ${userNote}` : ''}`,
+                                note: joinNote(`REQ_ITEM:${rItemId}`, userNote),
                                 performed_by: verifiedById,
                             },
                             tx
@@ -761,13 +813,22 @@ const verifyReturn = async (headerId, userSession) => {
                     }
                 }
 
+                const CONDITION_LABEL = { GOOD: 'ดี', DAMAGED: 'ชำรุด', LOST: 'สูญหาย', INCOMPLETE: 'ไม่ครบ' };
+                const condLabel = CONDITION_LABEL[condition] || condition;
                 const retReusableBal = await stockMovementRepo.fetchItemCurrentStock(currentReqItem.item_id, tx);
                 await stockMovementRepo.createStockMovement(
                     {
                         item_id: currentReqItem.item_id,
                         quantity: qtyToReturn,
                         type: 'ADJUST_IN',
-                        note: `ตรวจรับคืนพัสดุใช้ซ้ำจากใบ: ${header.doc_no}`,
+                        note: joinNote(
+                            `[รับคืน] ${itemLabel(currentReqItem)} ${qtyToReturn} ชิ้น`,
+                            `สภาพ: ${condLabel}`,
+                            `ใบ ${header.doc_no}`,
+                            deptLabel(header),
+                            returnedUnitCodes.length ? returnedUnitCodes.join(', ') : null,
+                            userNote ? `หมายเหตุ: ${userNote}` : null,
+                        ),
                         created_by: verifiedByName,
                         created_by_id: verifiedById,
                         balance_before: retReusableBal,
@@ -791,6 +852,7 @@ const verifyReturn = async (headerId, userSession) => {
                     const restore = Math.min(remaining, alloc.qty);
                     remaining -= restore;
 
+                    const allocLotCode = alloc.item_lots?.lot_code || alloc.lot_id;
                     await requisitionRepo.incrementLotQuantity(alloc.lot_id, restore, tx);
                     await stockMovementRepo.createStockMovement(
                         {
@@ -798,7 +860,13 @@ const verifyReturn = async (headerId, userSession) => {
                             lot_id: alloc.lot_id,
                             quantity: restore,
                             type: 'ADJUST_IN',
-                            note: `ตรวจรับคืนจากใบ: ${header.doc_no}`,
+                            note: joinNote(
+                                `[รับคืน] ${itemLabel(currentReqItem)} ${restore} ชิ้น`,
+                                `ล็อต ${allocLotCode}`,
+                                `ใบ ${header.doc_no}`,
+                                deptLabel(header),
+                                userNote ? `หมายเหตุ: ${userNote}` : null,
+                            ),
                             created_by: verifiedByName,
                             created_by_id: verifiedById,
                             balance_before: retRunningBal,

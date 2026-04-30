@@ -82,16 +82,25 @@ const adjustLotStock = async (lotId, payload, user = {}) => {
     const movementType = qtyDiff >= 0 ? 'ADJUST_IN' : 'ADJUST_OUT';
     const movementQty = Math.abs(qtyDiff);
     const reason = (payload.reason || '').toString().trim();
-    const note = resolveNote(payload);
-    const fullNote = reason
-        ? `PHYSICAL_COUNT | ${reason}${note ? ` | ${note}` : ''}`
-        : `PHYSICAL_COUNT${note ? ` | ${note}` : ''}`;
+    const userNote = resolveNote(payload);
+
+    const lotCode = existingLot.lot_code || '';
+    const itemName = existingLot.items?.name || '';
+    const itemCode = existingLot.items?.code || '';
+    const sign = qtyDiff >= 0 ? '+' : '';
+    const fullNote = [
+        `[ปรับสต็อก] ${[itemCode, itemName].filter(Boolean).join(' ')}`,
+        `ล็อต ${lotCode}`,
+        `${currentQty} → ${newQty} (${sign}${qtyDiff})`,
+        reason || 'ปรับนับสต็อก',
+        userNote,
+    ].filter(Boolean).join(' | ');
 
     return lotRepo.withTransaction(async (tx) => {
         const nextStatus = payload.status || existingLot.status;
         const data = DTO.adjustLotDTO({
             new_quantity: newQty,
-            note,
+            note: userNote,
             status: nextStatus,
         });
 
@@ -150,12 +159,19 @@ const deleteLot = async (lotId, user = {}) => {
         await lotRepo.updateLot(lotId, data, tx);
 
         if (currentQty > 0) {
+            const cancelLotCode = existingLot.lot_code || '';
+            const cancelItemName = existingLot.items?.name || '';
+            const cancelItemCode = existingLot.items?.code || '';
             await stockMovementRepo.createStockMovement({
                 item_id: existingLot.item_id,
                 lot_id: existingLot.id,
                 quantity: currentQty,
                 type: STOCK_MOVEMENT_TYPES.ADJUST_OUT,
-                note: 'ยกเลิก Lot',
+                note: [
+                    `[ยกเลิก Lot] ${[cancelItemCode, cancelItemName].filter(Boolean).join(' ')}`,
+                    `ล็อต ${cancelLotCode}`,
+                    `ตัดออก ${currentQty} ชิ้น`,
+                ].filter(Boolean).join(' | '),
                 created_by: user.email || null,
                 created_by_id: user.sub || null,
                 balance_before: balanceBefore,
@@ -192,23 +208,29 @@ const toggleLotStatus = async (lotId, user = {}) => {
         throw new Error('ไม่สามารถเปิดใช้งานล็อตที่หมดอายุแล้ว กรุณาปรับวันหมดอายุให้ยังไม่ถึงกำหนดก่อน');
     }
 
+    const STATUS_LABEL = { ACTIVE: 'เปิดใช้งาน', SUSPENDED: 'ระงับชั่วคราว' };
+    const prevLabel = STATUS_LABEL[existingLot.status] || existingLot.status;
+    const nextLabel = STATUS_LABEL[nextStatus] || nextStatus;
+
+    const itemCode = existingLot.items?.code || '';
+    const itemName = existingLot.items?.name || '';
+    const lotCode  = existingLot.lot_code || '';
+
     return lotRepo.withTransaction(async (tx) => {
-        const data = {
-            status: nextStatus,
-        };
-
         const currentStock = await stockMovementRepo.fetchItemCurrentStock(existingLot.item_id, tx);
-        
-        await lotRepo.updateLot(lotId, data, tx);
 
-        // Record the fact that the status changed in stock_movement. 
-        // We use type 'UPDATE' with quantity 0 to simply log the status shift.
+        await lotRepo.updateLot(lotId, { status: nextStatus }, tx);
+
         await stockMovementRepo.createStockMovement({
             item_id: existingLot.item_id,
             lot_id: existingLot.id,
             quantity: 0,
             type: STOCK_MOVEMENT_TYPES.UPDATE,
-            note: `เปลี่ยนสถานะเป็น ${nextStatus}`,
+            note: [
+                `[เปลี่ยนสถานะ] ${[itemCode, itemName].filter(Boolean).join(' ')}`,
+                `ล็อต ${lotCode}`,
+                `${prevLabel} → ${nextLabel}`,
+            ].join(' | '),
             created_by: user.email || null,
             created_by_id: user.sub || null,
             balance_before: currentStock,

@@ -136,12 +136,7 @@ const validateCreateReceive = (data) => {
         const itemType = (data.type || '').toString().trim().toUpperCase();
 
         if (normalizedStatus === RECEIVE_STATUSES.COMPLETED) {
-            if (itemType !== 'PURCHASE_ASSET') {
-                if (!item?.lot_code || !item.lot_code.toString().trim()) {
-                    return `items[${i}].lot_code is required when status is COMPLETED`;
-                }
-            }
-
+            // lot_code ไม่บังคับ — ถ้าไม่ส่งมา service จะ generate ให้อัตโนมัติ
             if (qty > expectedQty) {
                 return `items[${i}].qty cannot exceed expected_qty`;
             }

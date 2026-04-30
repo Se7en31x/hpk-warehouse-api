@@ -71,18 +71,26 @@ const createStockMovementDTO = (
     createdById = null,
     lotId = null,
     balanceBefore = 0,
-    balanceAfter = 0
-) => ({
-    item_id: item.item_id,
-    lot_id: lotId,
-    quantity: Number(item.qty),
-    type: 'RECEIVE_IN',
-    note: `Receive IN: ${docNo}`,
-    created_by: createdByName,
-    created_by_id: createdById ? createdById.toString().trim() : null,
-    balance_before: balanceBefore,
-    balance_after: balanceAfter,
-});
+    balanceAfter = 0,
+    noteOverride = null,
+) => {
+    const qty = Number(item.qty);
+    const lotCode = item.lot_code || null;
+    const autoNote = lotCode
+        ? `[รับเข้า] ล็อต ${lotCode} ${qty} ชิ้น | ใบ ${docNo}`
+        : `[รับเข้า] ${qty} ชิ้น | ใบ ${docNo}`;
+    return {
+        item_id: item.item_id,
+        lot_id: lotId,
+        quantity: qty,
+        type: 'RECEIVE_IN',
+        note: noteOverride || autoNote,
+        created_by: createdByName,
+        created_by_id: createdById ? createdById.toString().trim() : null,
+        balance_before: balanceBefore,
+        balance_after: balanceAfter,
+    };
+};
 
 const createCancelStockMovementDTO = (
     item = {},
@@ -92,17 +100,24 @@ const createCancelStockMovementDTO = (
     lotId = null,
     balanceBefore = 0,
     balanceAfter = 0
-) => ({
-    item_id: item.item_id,
-    lot_id: lotId,
-    quantity: Number(item.qty),
-    type: 'RECEIVE_CANCEL',
-    note: `Cancel Receive: ${docNo}`,
-    created_by: createdByName,
-    created_by_id: createdById ? createdById.toString().trim() : null,
-    balance_before: balanceBefore,
-    balance_after: balanceAfter,
-});
+) => {
+    const qty = Number(item.qty);
+    const lotCode = item.lot_code || null;
+    const note = lotCode
+        ? `[ยกเลิกรับเข้า] ล็อต ${lotCode} ${qty} ชิ้น | ใบ ${docNo}`
+        : `[ยกเลิกรับเข้า] ${qty} ชิ้น | ใบ ${docNo}`;
+    return {
+        item_id: item.item_id,
+        lot_id: lotId,
+        quantity: qty,
+        type: 'RECEIVE_CANCEL',
+        note,
+        created_by: createdByName,
+        created_by_id: createdById ? createdById.toString().trim() : null,
+        balance_before: balanceBefore,
+        balance_after: balanceAfter,
+    };
+};
 
 // ── Query DTOs ─────────────────────────────────────────────────────────────────
 

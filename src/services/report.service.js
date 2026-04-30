@@ -422,7 +422,7 @@ const getInventoryBalanceSummary = async ({ search, warehouseId, categoryId }) =
     where,
     orderBy: [{ warehouses: { name: 'asc' } }, { name: 'asc' }],
     select: {
-      id: true, code: true, name: true, current_stock: true, min_stock: true,
+      id: true, code: true, name: true, current_stock: true, min_stock: true, sell_price: true,
       unit:       { select: { name: true } },
       warehouses: { select: { id: true, name: true } },
       categories: { select: { name: true } },
@@ -431,14 +431,17 @@ const getInventoryBalanceSummary = async ({ search, warehouseId, categoryId }) =
 
   // Group by warehouse
   const groupMap = new Map();
+  let grandTotal = 0;
   rows.forEach(item => {
     const wName = item.warehouses?.name || 'ไม่ระบุคลัง';
     if (!groupMap.has(wName)) {
-      groupMap.set(wName, { warehouse: wName, items: [], totalStock: 0, belowMin: 0 });
+      groupMap.set(wName, { warehouse: wName, items: [], totalStock: 0, belowMin: 0, totalValue: 0 });
     }
     const g = groupMap.get(wName);
     const stock = safeNumber(item.current_stock);
     const minStock = safeNumber(item.min_stock);
+    const sellPrice = safeNumber(item.sell_price);
+    const value = stock * sellPrice;
     g.items.push({
       id:           String(item.id),
       code:         item.code,
@@ -447,8 +450,12 @@ const getInventoryBalanceSummary = async ({ search, warehouseId, categoryId }) =
       unit:         item.unit?.name || '-',
       currentStock: stock,
       minStock,
+      sellPrice,
+      value,
     });
     g.totalStock += stock;
+    g.totalValue += value;
+    grandTotal += value;
     if (minStock > 0 && stock <= minStock) g.belowMin++;
   });
 
@@ -457,7 +464,7 @@ const getInventoryBalanceSummary = async ({ search, warehouseId, categoryId }) =
     totalItems: g.items.length,
   }));
 
-  return { warehouses, totalItems: rows.length };
+  return { warehouses, totalItems: rows.length, grandTotal };
 };
 
 // ── Receive Report ─────────────────────────────────────────────────────────────
@@ -522,6 +529,201 @@ const getReceiveReportData = async ({ page, limit, dateFrom, dateTo, search, sup
   };
 };
 
+// ─── Phase 1: New report services ─────────────────────────────────────────────
+
+const getOverdueBorrows = async ({ page, limit, dateFrom, dateTo, departmentId, search }) => {
+  const { skip, totalPages } = paginate(page, limit);
+  const now = new Date();
+  const where = {
+    status: 'BORROWING',
+    due_date: { lt: now },
+    ...(dateFrom || dateTo ? { due_date: { lt: now, ...repo.buildDateRange(dateFrom, dateTo) } } : {}),
+    ...(departmentId ? { department_id: Number(departmentId) } : {}),
+    ...(search ? {
+      OR: [
+        { doc_no:       { contains: search, mode: 'insensitive' } },
+        { departments:  { name: { contains: search, mode: 'insensitive' } } },
+      ],
+    } : {}),
+  };
+  const { total, rows } = await repo.findOverdueBorrows({ skip, limit, where });
+  return {
+    items: rows.map(r => {
+      const daysOverdue = r.due_date
+        ? Math.ceil((now.getTime() - new Date(r.due_date).getTime()) / 86400000)
+        : null;
+      const requester = r.profiles_requisition_header_requester_idToprofiles;
+      return {
+        id:          String(r.id),
+        docNo:       r.doc_no || '-',
+        requester:   formatProfileName(requester),
+        department:  r.departments?.name || '-',
+        dueDate:     toISODate(r.due_date),
+        daysOverdue,
+        status:      r.status,
+        items: (r.requisition_item || []).map(it => ({
+          id:       String(it.id),
+          itemCode: it.items?.code || '-',
+          itemName: it.items?.name || '-',
+          qty:      safeNumber(it.req_qty),
+          issued:   safeNumber(it.issued_qty),
+          unit:     it.items?.unit?.name || '-',
+        })),
+      };
+    }),
+    total, page, limit, totalPages: totalPages(total),
+  };
+};
+
+const getItemRanking = async ({ mode = 'issued', dateFrom, dateTo, categoryId, warehouseId, page, limit }) => {
+  const { skip, totalPages } = paginate(page, limit);
+  if (mode === 'issued') {
+    const rows = await repo.findIssuedItemRanking({ dateFrom, dateTo, categoryId, warehouseId });
+    const paginated = rows.slice(skip, skip + limit);
+    return { items: paginated, total: rows.length, page, limit, totalPages: totalPages(rows.length) };
+  }
+  // mode === 'stock'
+  const { total, rows } = await repo.findItemsByStock({ categoryId, warehouseId, skip, limit });
+  return {
+    items: rows.map((r, idx) => ({
+      rank:         skip + idx + 1,
+      itemId:       String(r.id),
+      code:         r.code,
+      name:         r.name,
+      category:     r.categories?.name || '-',
+      warehouse:    r.warehouses?.name || '-',
+      unit:         r.unit?.name || '-',
+      lotCount:     r._count?.item_lots ?? 0,
+      currentStock: safeNumber(r.current_stock),
+      minStock:     safeNumber(r.min_stock),
+    })),
+    total, page, limit, totalPages: totalPages(total),
+  };
+};
+
+const getInventoryValue = async ({ categoryId, warehouseId }) => {
+  const rows = await repo.findInventoryValue({ categoryId, warehouseId });
+  let grandTotal = 0;
+  // Group by category
+  const catMap = new Map();
+  rows.forEach(r => {
+    const cat  = r.categories?.name || 'ไม่ระบุหมวดหมู่';
+    const wh   = r.warehouses?.name || '-';
+    const stock = safeNumber(r.current_stock);
+    const price = safeNumber(r.sell_price);
+    const value = stock * price;
+    grandTotal += value;
+    if (!catMap.has(cat)) catMap.set(cat, { category: cat, warehouse: wh, items: [], totalValue: 0, totalStock: 0 });
+    const g = catMap.get(cat);
+    g.items.push({
+      id:           String(r.id),
+      code:         r.code,
+      name:         r.name,
+      unit:         r.unit?.name || '-',
+      currentStock: stock,
+      sellPrice:    price,
+      value,
+    });
+    g.totalValue += value;
+    g.totalStock += stock;
+  });
+  return {
+    groups: Array.from(catMap.values()),
+    grandTotal,
+    totalItems: rows.length,
+  };
+};
+
+const getReturnCondition = async ({ page, limit, dateFrom, dateTo, search }) => {
+  const { skip, totalPages } = paginate(page, limit);
+  const where = {
+    ...(dateFrom || dateTo ? { return_date: repo.buildDateRange(dateFrom, dateTo) } : {}),
+    ...(search ? {
+      OR: [
+        { requisition_item: { items: { name: { contains: search, mode: 'insensitive' } } } },
+        { requisition_item: { items: { code: { contains: search, mode: 'insensitive' } } } },
+      ],
+    } : {}),
+  };
+  const { total, rows } = await repo.findReturnConditionData({ skip, limit, where });
+  return {
+    items: rows.map(r => ({
+      id:         String(r.id),
+      returnDate: toISODate(r.return_date),
+      itemCode:   r.requisition_item?.items?.code || '-',
+      itemName:   r.requisition_item?.items?.name || '-',
+      unit:       r.requisition_item?.items?.unit?.name || '-',
+      category:   r.requisition_item?.items?.categories?.name || '-',
+      qty:        safeNumber(r.return_qty),
+      condition:  r.condition || '-',
+      note:       r.note || '',
+    })),
+    total, page, limit, totalPages: totalPages(total),
+  };
+};
+
+const getDeptConsumption = async ({ dateFrom, dateTo, categoryId, departmentId }) => {
+  const rows = await repo.findDeptConsumptionData({ dateFrom, dateTo, categoryId });
+  // Group by department
+  const deptMap = new Map();
+  rows.forEach(r => {
+    const dept   = r.requisition_header?.departments;
+    const deptId = dept?.id || 0;
+    const deptName = dept?.name || 'ไม่ระบุแผนก';
+    if (departmentId && deptId !== Number(departmentId)) return;
+    if (!deptMap.has(deptId)) {
+      deptMap.set(deptId, {
+        departmentId: deptId,
+        departmentName: deptName,
+        requestCount: 0,
+        totalIssuedQty: 0,
+        totalValue: 0,
+        itemMap: new Map(),
+      });
+    }
+    const g = deptMap.get(deptId);
+    g.requestCount++;
+    const issued = safeNumber(r.issued_qty);
+    const price  = safeNumber(r.items?.sell_price);
+    g.totalIssuedQty += issued;
+    g.totalValue     += issued * price;
+
+    const itemId = r.items?.id;
+    if (itemId) {
+      if (!g.itemMap.has(itemId)) {
+        g.itemMap.set(itemId, {
+          itemId:   String(itemId),
+          itemCode: r.items?.code || '-',
+          itemName: r.items?.name || '-',
+          unit:     r.items?.unit?.name || '-',
+          category: r.items?.categories?.name || '-',
+          issuedQty: 0,
+          value:     0,
+        });
+      }
+      const im = g.itemMap.get(itemId);
+      im.issuedQty += issued;
+      im.value     += issued * price;
+    }
+  });
+
+  const groups = Array.from(deptMap.values()).map(g => {
+    const topItems = Array.from(g.itemMap.values())
+      .sort((a, b) => b.issuedQty - a.issuedQty)
+      .slice(0, 5);
+    return {
+      departmentId:   g.departmentId,
+      departmentName: g.departmentName,
+      requestCount:   g.requestCount,
+      totalIssuedQty: g.totalIssuedQty,
+      totalValue:     g.totalValue,
+      topItems,
+    };
+  }).sort((a, b) => b.totalValue - a.totalValue);
+
+  return { groups, totalDepts: groups.length };
+};
+
 module.exports = {
   getStockBalanceReport,
   getLowStockReport,
@@ -535,4 +737,10 @@ module.exports = {
   getNearExpiryReport,
   getInventoryBalanceSummary,
   getReceiveReportData,
+  // Phase 1
+  getOverdueBorrows,
+  getItemRanking,
+  getInventoryValue,
+  getReturnCondition,
+  getDeptConsumption,
 };

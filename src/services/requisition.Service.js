@@ -3,6 +3,7 @@ const requisitionRepo = require('../repositories/requisition.repo');
 const stockMovementRepo = require('../repositories/stockmovement.repo');
 const lotRepo = require('../repositories/lot.repo');
 const { isAdmin, getUserDepartmentIds } = require('../utils/userAccess');
+const { fireDispenseAdapter } = require('../adapters/dispense.adapter');
 
 const REQ_STATUS = {
     PENDING: 'PENDING',
@@ -562,7 +563,9 @@ const completeDelivery = async (headerId, userSession) => {
     const deliveredById = userSession?.sub || null;
     const deliveredByName = userSession?.email || deliveredById || 'SYSTEM';
 
-    return requisitionRepo.withTransaction(async (tx) => {
+    let rawHeaderForAdapter = null;
+
+    const result = await requisitionRepo.withTransaction(async (tx) => {
         const header = await requisitionRepo.SelectRequisitionById(headerId, tx);
         if (!header) throw createHttpError(404, 'ไม่พบใบเบิกที่ระบุ');
         const reqType = (header.type || '').toString().trim().toUpperCase();
@@ -588,8 +591,18 @@ const completeDelivery = async (headerId, userSession) => {
         }, tx);
 
         const updatedHeader = await requisitionRepo.SelectRequisitionById(headerId, tx);
+        rawHeaderForAdapter = updatedHeader;
         return DTO.mapRequisitionDetailResponse(updatedHeader);
     });
+
+    // fire-and-forget — ไม่ block response, ไม่ throw ออกมา
+    if (rawHeaderForAdapter) {
+        fireDispenseAdapter(rawHeaderForAdapter).catch((err) =>
+            console.error('[completeDelivery] dispense adapter error:', err.message)
+        );
+    }
+
+    return result;
 };
 
 /**

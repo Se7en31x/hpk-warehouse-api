@@ -219,6 +219,22 @@ const selectOptions = () => Promise.all([
     prisma.warehouses.findMany({ where: { deleted_at: null }, orderBy: { name: 'asc' }, select: { id: true, name: true } })
 ]);
 
+const MEDICINE_CATEGORY_ID = '93b17a8b-c934-46ee-96fc-bd7697b94874';
+
+const selectMedicineItems = () => prisma.items.findMany({
+    where: {
+        category_id: MEDICINE_CATEGORY_ID,
+        deleted_at: null,
+    },
+    select: {
+        id: true,
+        name: true,
+        category_id: true,
+        categories: { select: { name: true } },
+    },
+    orderBy: { name: 'asc' },
+});
+
 module.exports = {
     generateItemCode,
     SelectAllItems,
@@ -231,4 +247,5 @@ module.exports = {
     updateItem,
     softDeletedItem,
     selectOptions,
+    selectMedicineItems,
 }

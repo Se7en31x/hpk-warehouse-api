@@ -24,12 +24,17 @@ const analyticsRoutes = require('./analytics.routes')
 const reportsRoutes = require('./reports.routes')
 const profileRoutes = require('./profile.routes')
 const lookupRoutes  = require('./lookup.routes')
+const itemRoutesV2  = require('./item.routes.v2')
 
 router.get('/health', healthController.check)
 
 const v1 = express.Router()
 v1.use(mw)           // every /v1/* route requires a valid Supabase JWT
 router.use('/v1', v1)
+
+const v2 = express.Router()
+router.use('/v2', v2)
+v2.use('/items', itemRoutesV2)
 
 v1.use('/items', itemRoutes)
 v1.use('/lots', lotRoutes)

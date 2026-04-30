@@ -147,6 +147,16 @@ const getItemOption = async () => {
     return result;
 }
 
+const getMedicineItems = async () => {
+    const rows = await itemRepo.selectMedicineItems();
+    return rows.map((row) => ({
+        item_id: row.id,
+        item_name: row.name,
+        category_id: row.category_id,
+        category_name: row.categories?.name ?? null,
+    }));
+};
+
 module.exports = {
     getAllItems,
     getItemById,
@@ -154,4 +164,5 @@ module.exports = {
     getItemOption,
     softDeletedItem,
     updateItem,
+    getMedicineItems,
 }

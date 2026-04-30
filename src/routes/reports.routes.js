@@ -22,5 +22,12 @@ router.get('/near-expiry', ctrl.getNearExpiryReport);
 router.get('/inventory-balance', ctrl.getInventoryBalanceSummary);
 router.get('/receives', ctrl.getReceiveReport);
 
+// Phase 1 — New reports
+router.get('/overdue-borrows',        ctrl.getOverdueBorrows);
+router.get('/item-ranking',           ctrl.getItemRanking);
+router.get('/inventory-value',        ctrl.getInventoryValue);
+router.get('/return-condition',       ctrl.getReturnCondition);
+router.get('/department-consumption', ctrl.getDeptConsumption);
+
 module.exports = router;
 

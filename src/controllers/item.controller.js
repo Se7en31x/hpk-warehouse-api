@@ -136,6 +136,15 @@ const softDeletedItem = async (req, res) => {
     }
 }
 
+const getMedicineItems = async (req, res) => {
+    try {
+        const data = await itemService.getMedicineItems();
+        return util.sendResponse(res, 200, 'list medicine items success', data);
+    } catch (error) {
+        return util.sendResponse(res, 500, error.message);
+    }
+};
+
 module.exports = {
     getItems,
     getItemById,
@@ -143,4 +152,5 @@ module.exports = {
     getItemOption,
     softDeletedItem,
     updateItem,
+    getMedicineItems,
 }

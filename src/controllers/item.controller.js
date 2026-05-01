@@ -5,7 +5,7 @@ const util = require('../utils/response');
 
 const parseListQuery = (query) => {
     const page = Math.max(1, Number(query.page) || 1);
-    const limit = Math.min(100, Math.max(1, Number(query.limit) || 10));
+    const limit = Math.min(1000, Math.max(1, Number(query.limit) || 10));
     const keyword = (query.keyword || '').toString().trim();
     const start_date = (query.start_date || '').toString().trim();
     const end_date = (query.end_date || '').toString().trim();

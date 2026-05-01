@@ -76,8 +76,8 @@ const getStockInReports = async (req, res, next) => {
 
 const getLowStockReport = async (req, res, next) => {
   try {
-    const { search, warehouseId } = req.query;
-    res.json(await service.getLowStockReport({ search, warehouseId }));
+    const { search, warehouseId, dateFrom, dateTo } = req.query;
+    res.json(await service.getLowStockReport({ search, warehouseId, dateFrom, dateTo }));
   } catch (e) { next(e); }
 };
 
@@ -142,8 +142,8 @@ const getItemRanking = async (req, res, next) => {
 
 const getInventoryValue = async (req, res, next) => {
   try {
-    const { categoryId, warehouseId } = req.query;
-    res.json(await service.getInventoryValue({ categoryId, warehouseId }));
+    const { categoryId, warehouseId, asOfDate } = req.query;
+    res.json(await service.getInventoryValue({ categoryId, warehouseId, asOfDate: asOfDate || null }));
   } catch (e) { next(e); }
 };
 

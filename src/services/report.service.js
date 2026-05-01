@@ -8,9 +8,11 @@ const UUID_RE    = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 const formatProfileName = (p) => {
   if (!p) return '-';
-  const th = [p.firstname_th, p.lastname_th].filter(Boolean).join(' ');
-  const en = [p.firstname_en, p.lastname_en].filter(Boolean).join(' ');
-  return th || en || '-';
+  const th = [p.firstname_th, p.lastname_th].filter(Boolean).join(' ').trim();
+  const en = [p.firstname_en, p.lastname_en].filter(Boolean).join(' ').trim();
+  const base = th || en || '';
+  const withTitle = p.titleShort ? `${p.titleShort} ${base}`.trim() : base;
+  return (withTitle || '-');
 };
 
 const paginate = (page, limit) => ({
@@ -48,12 +50,19 @@ const getStockBalanceReport = async ({ page, limit, warehouseId, search }) => {
   };
 };
 
+const resolveStockMovementOperatorId = (r) => {
+  if (r.created_by_id) return String(r.created_by_id).trim();
+  const raw = r.created_by && String(r.created_by).trim();
+  return raw && UUID_RE.test(raw) ? raw : null;
+};
+
 const getStockMovementReport = async ({ page, limit, dateFrom, dateTo, itemId, warehouseId, search, type, userId, isWarehouseStaff }) => {
   const { skip, totalPages } = paginate(page, limit);
   const where = {
     ...(type && { type }),
     ...(dateFrom || dateTo ? { created_at: repo.buildDateRange(dateFrom, dateTo) } : {}),
     ...(itemId && { item_id: itemId }),
+    ...(warehouseId && { items: { warehouse_id: Number(warehouseId) } }),
     ...(search && {
       OR: [
         { note: { contains: search, mode: 'insensitive' } },
@@ -66,13 +75,20 @@ const getStockMovementReport = async ({ page, limit, dateFrom, dateTo, itemId, w
   };
   const { total, rows } = await repo.findStockMovement({ skip, limit, where });
 
-  // Batch-resolve operator names + departments from profiles
-  const uniqueIds = [...new Set(rows.map(r => r.created_by_id).filter(Boolean))];
+  // Batch-resolve operator display name from public.profiles (+ lookup_titles)
+  const uniqueIds = [...new Set(rows.map(resolveStockMovementOperatorId).filter(Boolean))];
   const profileMap = await repo.findProfilesByIds(uniqueIds);
 
   return {
     items: rows.map(r => {
-      const profile = profileMap.get(r.created_by_id);
+      const opId    = resolveStockMovementOperatorId(r);
+      const profile = opId ? profileMap.get(opId) : null;
+      const nameFromProfile = profile ? formatProfileName(profile) : '-';
+      const fallbackName =
+        r.created_by && (!UUID_RE.test(String(r.created_by).trim()))
+          ? r.created_by
+          : '-';
+
       return {
         id:             String(r.id),
         type:           r.type,
@@ -82,8 +98,7 @@ const getStockMovementReport = async ({ page, limit, dateFrom, dateTo, itemId, w
         quantity:       safeNumber(r.quantity),
         unit:           r.items?.unit?.name || '-',
         date:           toISODate(r.created_at),
-        operatorName:   profile?.name ?? (r.created_by && !UUID_RE.test(r.created_by) ? r.created_by : '-'),
-        departmentName: profile?.department ?? '-',
+        operatorName: nameFromProfile !== '-' ? nameFromProfile : fallbackName,
         note:           r.note || '',
       };
     }),
@@ -243,8 +258,8 @@ const getStockInReportHeader = async ({ page, limit, dateFrom, dateTo, status, t
 };
 
 // --- Low Stock Report (dual-mode: sum active lots OR current_stock vs min_stock) ---
-const getLowStockReport = async ({ search, warehouseId } = {}) => {
-  const items = await repo.findItemsWithMinStock({ warehouseId });
+const getLowStockReport = async ({ search, warehouseId, dateFrom, dateTo } = {}) => {
+  const items = await repo.findItemsWithMinStock({ warehouseId, dateFrom, dateTo });
 
   const result = items
     .map(item => {
@@ -268,6 +283,7 @@ const getLowStockReport = async ({ search, warehouseId } = {}) => {
         minStock:       safeNumber(item.min_stock),
         shortfall:      Math.max(0, safeNumber(item.min_stock) - availableStock),
         hasLots,
+        createdAt:      item.created_at ?? null,
       };
     })
     .filter(item => item.availableStock <= item.minStock);
@@ -601,36 +617,87 @@ const getItemRanking = async ({ mode = 'issued', dateFrom, dateTo, categoryId, w
   };
 };
 
-const getInventoryValue = async ({ categoryId, warehouseId }) => {
-  const rows = await repo.findInventoryValue({ categoryId, warehouseId });
+const getInventoryValue = async ({ categoryId, warehouseId, asOfDate }) => {
   let grandTotal = 0;
-  // Group by category
-  const catMap = new Map();
-  rows.forEach(r => {
-    const cat  = r.categories?.name || 'ไม่ระบุหมวดหมู่';
-    const wh   = r.warehouses?.name || '-';
-    const stock = safeNumber(r.current_stock);
-    const price = safeNumber(r.sell_price);
-    const value = stock * price;
-    grandTotal += value;
-    if (!catMap.has(cat)) catMap.set(cat, { category: cat, warehouse: wh, items: [], totalValue: 0, totalStock: 0 });
-    const g = catMap.get(cat);
-    g.items.push({
-      id:           String(r.id),
-      code:         r.code,
-      name:         r.name,
-      unit:         r.unit?.name || '-',
-      currentStock: stock,
-      sellPrice:    price,
-      value,
+  const catMap   = new Map();
+  let totalItems = 0;
+
+  const pushItem = (cat, wh, item) => {
+    const key = `${cat}::${wh}`;
+    if (!catMap.has(key)) catMap.set(key, { category: cat, warehouse: wh, items: [], totalValue: 0, totalStock: 0 });
+    const g = catMap.get(key);
+    g.items.push(item);
+    g.totalValue += item.value;
+    g.totalStock += item.currentStock;
+    grandTotal   += item.value;
+  };
+
+  if (asOfDate) {
+    // ── Historical mode ────────────────────────────────────────────────────────
+    // Use receive_item as source of truth:
+    //   stock  = SUM(receive qty up to date) - SUM(issued qty up to date)
+    //   price  = latest cost_price from receives up to date → sell_price fallback
+    const { receivedGroups, issuedGroups, latestCostReceives, items } =
+      await repo.findHistoricalInventoryByReceive({ asOfDate, categoryId, warehouseId });
+
+    // Build lookup maps from raw repo data
+    const receivedMap  = new Map(receivedGroups.map(r => [r.item_id, safeNumber(r._sum.qty)]));
+    const issuedMap    = new Map(issuedGroups.map(r => [r.item_id, safeNumber(r._sum.issued_qty)]));
+    const costPriceMap = new Map(latestCostReceives.map(r => [r.item_id, safeNumber(r.cost_price)]));
+
+    totalItems = items.length;
+
+    items.forEach(item => {
+      const cat = item.categories?.name || 'ไม่ระบุหมวดหมู่';
+      const wh  = item.warehouses?.name || 'ไม่ระบุคลัง';
+
+      const receivedQty = receivedMap.get(item.id) ?? 0;
+      const issuedQty   = issuedMap.get(item.id)   ?? 0;
+      const stock       = Math.max(0, receivedQty - issuedQty);
+
+      const costPrice  = costPriceMap.get(item.id) ?? 0;
+      const sellPrice  = safeNumber(item.sell_price);
+      const price      = costPrice > 0 ? costPrice : sellPrice;
+      const priceSource = costPrice > 0 ? 'cost' : sellPrice > 0 ? 'sell' : 'none';
+
+      pushItem(cat, wh, {
+        id: String(item.id), code: item.code, name: item.name,
+        unit: item.unit?.name || '-',
+        currentStock: stock, sellPrice: price, priceSource,
+        value: stock * price,
+      });
     });
-    g.totalValue += value;
-    g.totalStock += stock;
-  });
+
+  } else {
+    // ── Current snapshot ───────────────────────────────────────────────────────
+    // Use items.current_stock directly; price = sell_price → latest cost_price
+    const rows = await repo.findInventoryValue({ categoryId, warehouseId });
+    totalItems  = rows.length;
+
+    rows.forEach(r => {
+      const cat  = r.categories?.name || 'ไม่ระบุหมวดหมู่';
+      const wh   = r.warehouses?.name || 'ไม่ระบุคลัง';
+      const stock = safeNumber(r.current_stock);
+
+      const sellPrice  = safeNumber(r.sell_price);
+      const costPrice  = safeNumber(r.receive_item?.[0]?.cost_price);
+      const price      = sellPrice > 0 ? sellPrice : costPrice;
+      const priceSource = sellPrice > 0 ? 'sell' : costPrice > 0 ? 'cost' : 'none';
+
+      pushItem(cat, wh, {
+        id: String(r.id), code: r.code, name: r.name,
+        unit: r.unit?.name || '-',
+        currentStock: stock, sellPrice: price, priceSource,
+        value: stock * price,
+      });
+    });
+  }
+
   return {
-    groups: Array.from(catMap.values()),
+    groups:     Array.from(catMap.values()),
     grandTotal,
-    totalItems: rows.length,
+    totalItems,
+    asOfDate:   asOfDate || null,
   };
 };
 
@@ -675,16 +742,21 @@ const getDeptConsumption = async ({ dateFrom, dateTo, categoryId, departmentId }
       deptMap.set(deptId, {
         departmentId: deptId,
         departmentName: deptName,
-        requestCount: 0,
+        headerIds: new Set(),   // unique requisition headers → true requestCount
         totalIssuedQty: 0,
         totalValue: 0,
         itemMap: new Map(),
       });
     }
     const g = deptMap.get(deptId);
-    g.requestCount++;
-    const issued = safeNumber(r.issued_qty);
-    const price  = safeNumber(r.items?.sell_price);
+    // Count unique requisition headers (each header = 1 withdrawal request)
+    const headerId = r.requisition_header?.id;
+    if (headerId) g.headerIds.add(headerId);
+
+    const issued     = safeNumber(r.issued_qty);
+    const sellPrice  = safeNumber(r.items?.sell_price);
+    const costPrice  = safeNumber(r.items?.receive_item?.[0]?.cost_price);
+    const price      = sellPrice > 0 ? sellPrice : costPrice;
     g.totalIssuedQty += issued;
     g.totalValue     += issued * price;
 
@@ -714,12 +786,13 @@ const getDeptConsumption = async ({ dateFrom, dateTo, categoryId, departmentId }
     return {
       departmentId:   g.departmentId,
       departmentName: g.departmentName,
-      requestCount:   g.requestCount,
+      requestCount:   g.headerIds.size,   // unique requests (headers)
       totalIssuedQty: g.totalIssuedQty,
       totalValue:     g.totalValue,
       topItems,
     };
-  }).sort((a, b) => b.totalValue - a.totalValue);
+  // Sort by totalValue desc; fall back to totalIssuedQty if values are equal
+  }).sort((a, b) => b.totalValue - a.totalValue || b.totalIssuedQty - a.totalIssuedQty);
 
   return { groups, totalDepts: groups.length };
 };

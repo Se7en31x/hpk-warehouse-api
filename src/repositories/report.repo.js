@@ -138,7 +138,7 @@ const findStockInHeaders = async ({ skip, limit, where }) => {
 
 // ─── Items with Min Stock (for low-stock alert) ────────────────────────────────
 
-const findItemsWithMinStock = async ({ warehouseId } = {}) => {
+const findItemsWithMinStock = async ({ warehouseId, dateFrom, dateTo } = {}) => {
   const now = new Date();
   return prisma.items.findMany({
     where: {
@@ -146,11 +146,18 @@ const findItemsWithMinStock = async ({ warehouseId } = {}) => {
       status:    'ACTIVE',
       min_stock: { gt: 0 },
       ...(warehouseId ? { warehouse_id: warehouseId } : {}),
+      ...(dateFrom || dateTo ? {
+        created_at: {
+          ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
+          ...(dateTo   ? { lte: new Date(new Date(dateTo).setHours(23, 59, 59, 999)) } : {}),
+        },
+      } : {}),
     },
     orderBy: { current_stock: 'asc' },
     select: {
       id: true, code: true, name: true, type: true,
       current_stock: true, min_stock: true,
+      created_at: true,
       unit:       { select: { name: true } },
       warehouses: { select: { name: true } },
       categories: { select: { name: true } },
@@ -217,30 +224,15 @@ const findProfilesByIds = async (ids) => {
         firstname_th: true, lastname_th: true,
         firstname_en: true, lastname_en: true,
         title_code:   true,
-        department_id: true,
       },
     }),
     prisma.lookup_titles.findMany({ select: { title_code: true, short_name: true } }),
   ]);
-  const deptIds = [...new Set(
-    profiles.flatMap(p => Array.isArray(p.department_id) ? p.department_id : (p.department_id ? [p.department_id] : []))
-  )].filter(Boolean);
-  const depts = deptIds.length
-    ? await prisma.departments.findMany({
-        where: { id: { in: deptIds } },
-        select: { id: true, name: true },
-      })
-    : [];
   const titleMap = new Map(titles.map(t => [t.title_code, t.short_name]));
-  const deptMap  = new Map(depts.map(d => [d.id, d.name]));
-  return new Map(profiles.map(p => {
-    const deptId = Array.isArray(p.department_id) ? p.department_id[0] : p.department_id;
-    return [p.id, {
-      ...p,
-      titleShort:     titleMap.get(p.title_code) || '',
-      departmentName: deptMap.get(deptId) || '-',
-    }];
-  }));
+  return new Map(profiles.map(p => [p.id, {
+    ...p,
+    titleShort: titleMap.get(p.title_code) || '',
+  }]));
 };
 
 // ─── Receive Report ────────────────────────────────────────────────────────────
@@ -375,6 +367,94 @@ const findItemsByStock = async ({ categoryId, warehouseId, skip, limit }) => {
   return { total, rows };
 };
 
+// Historical inventory value from receive/issue records (source of truth)
+// stock_at_date = SUM(receive_item.qty up to date) - SUM(requisition_item.issued_qty up to date)
+const findHistoricalInventoryByReceive = async ({ asOfDate, categoryId, warehouseId }) => {
+  const cutoff = new Date(asOfDate);
+  cutoff.setHours(23, 59, 59, 999);
+
+  const itemFilter = {
+    deleted_at: null,
+    ...(categoryId  ? { category_id: parseInt(categoryId) } : {}),
+    ...(warehouseId ? { warehouse_id: warehouseId }         : {}),
+  };
+
+  // Step 1: Receive header IDs where batch receive_date ≤ cutoff
+  const receiveHeaders = await prisma.receive_header.findMany({
+    where: { receive_batch: { is: { receive_date: { lte: cutoff } } } },
+    select: { id: true },
+  });
+  const receiveHeaderIds = receiveHeaders.map(h => h.id);
+
+  if (!receiveHeaderIds.length) {
+    return { receivedMap: new Map(), issuedMap: new Map(), costPriceMap: new Map(), items: [] };
+  }
+
+  // Step 2: Requisition header IDs where request_date ≤ cutoff
+  const reqHeaders = await prisma.requisition_header.findMany({
+    where: {
+      status:       { in: ['COMPLETED', 'APPROVED', 'BORROWING'] },
+      request_date: { lte: cutoff },
+    },
+    select: { id: true },
+  });
+  const reqHeaderIds = reqHeaders.map(h => h.id);
+
+  const [receivedGroups, issuedGroups, latestCostReceives] = await Promise.all([
+    // SUM received qty per item
+    prisma.receive_item.groupBy({
+      by:    ['item_id'],
+      where: { header_id: { in: receiveHeaderIds }, items: itemFilter },
+      _sum:  { qty: true },
+    }),
+
+    // SUM issued qty per item
+    reqHeaderIds.length
+      ? prisma.requisition_item.groupBy({
+          by:    ['item_id'],
+          where: { header_id: { in: reqHeaderIds }, issued_qty: { gt: 0 }, items: itemFilter },
+          _sum:  { issued_qty: true },
+        })
+      : Promise.resolve([]),
+
+    // Latest cost_price per item from receives up to date
+    prisma.receive_item.findMany({
+      where:   { header_id: { in: receiveHeaderIds }, cost_price: { gt: 0 } },
+      select:  { item_id: true, cost_price: true },
+      orderBy: { id: 'desc' },
+      distinct: ['item_id'],
+    }),
+  ]);
+
+  // Item details for all items that appear in receive records
+  const receivedItemIds = [...new Set(receivedGroups.map(r => r.item_id).filter(Boolean))];
+  const items = receivedItemIds.length
+    ? await prisma.items.findMany({
+        where:  { id: { in: receivedItemIds } },
+        select: {
+          id: true, code: true, name: true, sell_price: true,
+          categories: { select: { name: true } },
+          warehouses:  { select: { name: true } },
+          unit:        { select: { name: true } },
+        },
+      })
+    : [];
+
+  return { receivedGroups, issuedGroups, latestCostReceives, items };
+};
+
+// (kept for potential future use with stocks_movement)
+const findMovementSumsAfterDate = async ({ asOfDate, itemIds }) => {
+  if (!itemIds || !itemIds.length) return [];
+  const cutoff = new Date(asOfDate);
+  cutoff.setHours(23, 59, 59, 999);
+  return prisma.stocks_movement.groupBy({
+    by: ['item_id', 'type'],
+    where: { item_id: { in: itemIds }, created_at: { gt: cutoff } },
+    _sum: { quantity: true },
+  });
+};
+
 const findInventoryValue = async ({ categoryId, warehouseId }) => {
   return prisma.items.findMany({
     where: {
@@ -385,9 +465,17 @@ const findInventoryValue = async ({ categoryId, warehouseId }) => {
     },
     select: {
       id: true, code: true, name: true, current_stock: true, sell_price: true,
+      created_at: true,
       categories: { select: { name: true } },
       warehouses:  { select: { name: true } },
       unit:        { select: { name: true } },
+      // Latest cost_price from receive records as price fallback
+      receive_item: {
+        where:   { cost_price: { gt: 0 } },
+        select:  { cost_price: true },
+        orderBy: { id: 'desc' },
+        take: 1,
+      },
     },
     orderBy: [{ categories: { name: 'asc' } }, { name: 'asc' }],
   });
@@ -437,6 +525,12 @@ const findDeptConsumptionData = async ({ dateFrom, dateTo, categoryId }) => {
           id: true, code: true, name: true, sell_price: true,
           unit:       { select: { name: true } },
           categories: { select: { name: true } },
+          // latest cost_price as fallback when sell_price = 0
+          receive_item: {
+            orderBy: { id: 'desc' },
+            take: 1,
+            select: { cost_price: true },
+          },
         },
       },
       requisition_header: {
@@ -470,6 +564,8 @@ module.exports = {
   findOverdueBorrows,
   findIssuedItemRanking,
   findItemsByStock,
+  findHistoricalInventoryByReceive,
+  findMovementSumsAfterDate,
   findInventoryValue,
   findReturnConditionData,
   findDeptConsumptionData,

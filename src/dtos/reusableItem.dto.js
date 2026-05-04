@@ -61,6 +61,7 @@ const mapReusableUnitResponse = (unit = {}) => ({
     item_id: unit.item_id,
     item_code: unit.items?.code || null,
     item_name: unit.items?.name || null,
+    item_image_url: unit.items?.image_url || null,
     receive_item_id: unit.receive_item_id || null,
     receive_doc_no: unit.receive_item?.receive_header?.doc_no || null,
     serial_no: unit.serial_no || null,

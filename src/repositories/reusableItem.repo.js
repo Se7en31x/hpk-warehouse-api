@@ -3,7 +3,7 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 const unitInclude = {
-    items: { select: { id: true, code: true, name: true } },
+    items: { select: { id: true, code: true, name: true, image_url: true } },
     // Join ข้อมูลแผนก
     departments: { select: { id: true, name: true } },
     movement_logs: {
@@ -174,6 +174,21 @@ const createReusableUnitLog = async (data, tx = prisma) => {
     return tx.reusable_item_unit_logs.create({ data });
 };
 
+/** ดึง image_url จาก inventory.items ตาม UUID (ใช้เติมรูปใน returnable summary) */
+const selectItemsImageByIds = async (itemIds = [], tx = prisma) => {
+    const ids = (itemIds || []).map((id) => String(id).trim()).filter(Boolean);
+    if (ids.length === 0) return new Map();
+
+    const rows = await tx.items.findMany({
+        where: {
+            id: { in: ids },
+            deleted_at: null,
+        },
+        select: { id: true, image_url: true },
+    });
+    return new Map(rows.map((r) => [String(r.id), r.image_url || null]));
+};
+
 const selectInUseUnitsByDepartment = async (departmentId, tx = prisma) => {
     return tx.reusable_item_units.findMany({
         where: {
@@ -205,6 +220,7 @@ const selectInUseUnitsByDepartment = async (departmentId, tx = prisma) => {
                     id: true,
                     code: true,
                     name: true,
+                    image_url: true,
                     categories: {
                         select: {
                             name: true,
@@ -461,28 +477,50 @@ const selectItemByBarcodeValue = async ({ value = '' } = {}, tx = prisma) => {
     });
 };
 
-const selectInUseWithdrawUnitsByIds = async ({ departmentId, unitIds = [] } = {}, tx = prisma) => {
+const selectInUseWithdrawUnitsByIds = async ({ departmentId, unitIds = [], unitCodes = [] } = {}, tx = prisma) => {
     const normalizedIds = Array.from(
         new Set(
             (Array.isArray(unitIds) ? unitIds : [])
-                .map((id) => (id || '').toString().trim())
+                .map((id) => (id || '').toString().trim().toLowerCase())
                 .filter(Boolean)
         )
     );
 
-    if (!normalizedIds.length) return [];
+    const normalizedCodes = Array.from(
+        new Set(
+            (Array.isArray(unitCodes) ? unitCodes : [])
+                .map((c) => (c || '').toString().trim())
+                .filter(Boolean)
+        )
+    );
+
+    if (!normalizedIds.length && !normalizedCodes.length) return [];
+
+    const baseWhere = {
+        department_id: Number(departmentId),
+        status: 'IN_USE',
+        deleted_at: null,
+        movement_logs: {
+            some: {
+                action: { in: ['ISSUE_WITHDRAW_REUSABLE', 'ISSUE_REUSABLE'] },
+            },
+        },
+    };
+
+    const orClause = [];
+    if (normalizedIds.length) {
+        orClause.push({ id: { in: normalizedIds } });
+    }
+    if (normalizedCodes.length) {
+        normalizedCodes.forEach((code) => {
+            orClause.push({ unit_code: { equals: code, mode: 'insensitive' } });
+        });
+    }
 
     return tx.reusable_item_units.findMany({
         where: {
-            id: { in: normalizedIds },
-            department_id: Number(departmentId),
-            status: 'IN_USE',
-            deleted_at: null,
-            movement_logs: {
-                some: {
-                    action: { in: ['ISSUE_WITHDRAW_REUSABLE', 'ISSUE_REUSABLE'] },
-                },
-            },
+            ...baseWhere,
+            OR: orClause,
         },
         select: {
             id: true,
@@ -490,6 +528,8 @@ const selectInUseWithdrawUnitsByIds = async ({ departmentId, unitIds = [] } = {}
             unit_code: true,
             serial_no: true,
             department_id: true,
+            status: true,
+            condition: true,
             movement_logs: {
                 where: { action: { in: ['ISSUE_WITHDRAW_REUSABLE', 'ISSUE_REUSABLE'] } },
                 select: { action: true, ref_doc_no: true, created_at: true },
@@ -532,6 +572,7 @@ module.exports = {
     updateReusableUnit,
     createReusableUnitLog,
     selectInUseUnitsByDepartment,
+    selectItemsImageByIds,
     countReturnRequestsByYear,
     createReturnRequestHeader,
     createReturnRequestItems,

@@ -29,6 +29,21 @@ const inferUsageContextFromLog = (log = null) => {
     return null;
 };
 
+/** รหัสอ้างอิงหน่วยจากหน้า process: UUID หรือ CODE:unit_code หรือ unit_code ดิบ */
+const PROCESS_UNIT_UUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const parseProcessUnitRef = (raw) => {
+    const s = (raw || '').toString().trim();
+    if (!s) return { uuid: null, code: null };
+    if (PROCESS_UNIT_UUID_RE.test(s)) return { uuid: s.toLowerCase(), code: null };
+    if (s.toUpperCase().startsWith('CODE:')) {
+        const code = s.slice(5).trim();
+        return code ? { uuid: null, code } : { uuid: null, code: null };
+    }
+    return { uuid: null, code: s };
+};
+
 const createHttpError = (statusCode, message) => {
     const error = new Error(message);
     error.statusCode = statusCode;
@@ -83,7 +98,8 @@ const enrichReturnRequestWithUnitDetails = async (mappedRequest, tx = null) => {
 
     const unitRows = await reusableRepo.selectUnitsByCodes(
         {
-            departmentId: mappedRequest.department_id,
+            // ไม่กรองแผนก: หลังรับคืนหน่วยกลับคลัง (department_id เป็น null) แต่ยังต้องแสดงสถานะ/สภาพจริงจาก DB
+            departmentId: null,
             unitCodes: allCodes,
         },
         tx || undefined
@@ -428,11 +444,19 @@ const getReturnableWithdrawSummary = async (departmentId, tx = null) => {
                 item_code: unit.items?.code || null,
                 item_name: unit.items?.name || null,
                 category_name: unit.items?.categories?.name || null,
+                image_url: unit.items?.image_url || null,
                 in_use_qty: 0,
             });
         }
 
         grouped.get(unit.item_id).in_use_qty += 1;
+    }
+
+    const itemIds = Array.from(grouped.keys());
+    const imageMap = await reusableRepo.selectItemsImageByIds(itemIds, tx || undefined);
+    for (const row of grouped.values()) {
+        const fromItems = imageMap.get(String(row.item_id));
+        row.image_url = fromItems || row.image_url || null;
     }
 
     return {
@@ -621,43 +645,72 @@ const processReturnRequest = async (id, payload = {}, userSession = null) => {
 
             (mappedRequest.items || []).forEach((item) => {
                 requestedQtyByItem.set(item.item_id, Number(item.requested_qty || 0));
-                (item.requested_unit_codes || []).forEach((code) => requestedCodeToItemId.set(code, item.item_id));
+                (item.requested_unit_codes || []).forEach((code) => {
+                    const c = (code || '').toString().trim();
+                    if (c) requestedCodeToItemId.set(c.toLowerCase(), item.item_id);
+                });
             });
 
             if (!requestedCodeToItemId.size) {
                 throw createHttpError(400, 'request does not contain unit-level details; process with item summary instead');
             }
 
-            const uniqueUnitIds = Array.from(
-                new Set(
-                    unitResults
-                        .map((row) => (row?.unit_id || '').toString().trim())
-                        .filter(Boolean)
-                )
-            );
+            const uuidSet = new Set();
+            const codeSet = new Set();
+            for (const row of unitResults) {
+                const { uuid, code } = parseProcessUnitRef(row?.unit_id);
+                if (uuid) uuidSet.add(uuid);
+                if (code) codeSet.add(code);
+            }
 
             const candidateUnits = await reusableRepo.selectInUseWithdrawUnitsByIds(
                 {
                     departmentId: request.department_id,
-                    unitIds: uniqueUnitIds,
+                    unitIds: [...uuidSet],
+                    unitCodes: [...codeSet],
                 },
                 tx
             );
 
             const withdrawUnits = (candidateUnits || []).filter((unit) => inferUsageContextFromLog(unit.movement_logs?.[0] || null) === 'WITHDRAW');
-            const withdrawUnitById = new Map(withdrawUnits.map((unit) => [unit.id, unit]));
+            const withdrawUnitById = new Map(withdrawUnits.map((unit) => [String(unit.id).toLowerCase(), unit]));
+            const withdrawUnitByCode = new Map(
+                withdrawUnits.map((unit) => [String(unit.unit_code || '').toLowerCase(), unit])
+            );
+
+            const resolveWithdrawUnit = (row) => {
+                const { uuid, code } = parseProcessUnitRef(row?.unit_id);
+                if (uuid) {
+                    const byId = withdrawUnitById.get(uuid);
+                    if (byId) return byId;
+                }
+                if (code) {
+                    return withdrawUnitByCode.get(code.toLowerCase()) || null;
+                }
+                return null;
+            };
+
             const selectedQtyByItem = new Map();
 
             for (let idx = 0; idx < unitResults.length; idx += 1) {
                 const row = unitResults[idx] || {};
-                const unitId = (row.unit_id || '').toString().trim();
-                const unit = withdrawUnitById.get(unitId);
+                const unit = resolveWithdrawUnit(row);
 
                 if (!unit) {
-                    throw createHttpError(400, `unit_id ${unitId} not found in department withdraw stock`);
+                    throw createHttpError(
+                        400,
+                        `unit_id ${(row.unit_id || '').toString().trim()} not found in department withdraw stock`
+                    );
                 }
 
-                const requestedItemId = requestedCodeToItemId.get(unit.unit_code);
+                const requestedItemId = requestedCodeToItemId.get(String(unit.unit_code || '').toLowerCase());
+                if (requestedItemId == null) {
+                    throw createHttpError(
+                        400,
+                        `unit ${unit.unit_code} is not listed on this return request`
+                    );
+                }
+
                 const nextCount = Number(selectedQtyByItem.get(unit.item_id) || 0) + 1;
                 const requestedQty = Number(requestedQtyByItem.get(unit.item_id) || 0);
 
@@ -671,8 +724,13 @@ const processReturnRequest = async (id, payload = {}, userSession = null) => {
             const returnedQtyByItem = new Map();
 
             for (const row of unitResults) {
-                const unitId = (row.unit_id || '').toString().trim();
-                const unit = withdrawUnitById.get(unitId);
+                const unit = resolveWithdrawUnit(row);
+                if (!unit) {
+                    throw createHttpError(
+                        400,
+                        `unit_id ${(row.unit_id || '').toString().trim()} not found in department withdraw stock`
+                    );
+                }
                 const nextState = getReusableReturnState(row.condition || 'GOOD');
 
                 await reusableRepo.updateReusableUnit(

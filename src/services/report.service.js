@@ -410,7 +410,12 @@ const getAssetReport = async ({ page, limit, search, status, departmentId }) => 
   };
   const { total, rows } = await repo.findAssets({ skip, limit, where });
   return {
-    items: rows.map(r => ({
+    items: rows.map((r) => {
+      const batchReceiveDate = r.receive_item?.receive_header?.receive_batch?.receive_date ?? null;
+      const receiveWarrantyAt = r.receive_item?.expired_at ?? null;
+      const purchaseSrc = r.purchase_date ?? batchReceiveDate;
+      const warrantySrc = r.warranty_expire ?? receiveWarrantyAt;
+      return {
       id:             r.id,
       assetCode:      r.asset_code,
       serialNo:       r.serial_no || '-',
@@ -419,12 +424,13 @@ const getAssetReport = async ({ page, limit, search, status, departmentId }) => 
       category:       r.items?.categories?.name || '-',
       department:     r.departments?.name || 'ไม่ระบุแผนก',
       status:         r.status,
-      purchaseDate:   toISODate(r.purchase_date),
-      warrantyExpire: toISODate(r.warranty_expire),
+      purchaseDate:   toISODate(purchaseSrc),
+      warrantyExpire: toISODate(warrantySrc),
       unitCount:      r.asset_units?.length || 0,
       note:           r.note || '',
       createdAt:      toISODate(r.created_at),
-    })),
+      };
+    }),
     total, page, limit, totalPages: totalPages(total),
   };
 };

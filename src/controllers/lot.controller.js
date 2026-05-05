@@ -7,13 +7,26 @@ const parseListQuery = (query = {}) => {
     const keyword = (query.keyword || query.search || '').toString().trim();
     const warehouse_id = (query.warehouse_id || query.warehouse || '').toString().trim();
     const category_id = (query.category_id || query.category || '').toString().trim();
+    const item_id = (query.item_id || query.item || '').toString().trim();
     const status = (query.status || '').toString().trim();
     const expiry_status = (query.expiry_status || '').toString().trim();
     const start_date = (query.start_date || '').toString().trim();
     const end_date = (query.end_date || '').toString().trim();
     const expiry_days = (query.expiry_days || '').toString().trim();
 
-    return { page, limit, keyword, warehouse_id, category_id, status, expiry_status, start_date, end_date, expiry_days };
+    return {
+        page,
+        limit,
+        keyword,
+        warehouse_id,
+        category_id,
+        item_id,
+        status,
+        expiry_status,
+        start_date,
+        end_date,
+        expiry_days,
+    };
 };
 
 const getAllLots = async (req, res) => {

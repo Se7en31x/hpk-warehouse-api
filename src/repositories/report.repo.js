@@ -203,6 +203,16 @@ const findAssets = async ({ skip, limit, where }) => {
         items:       { include: { categories: true } },
         departments: { select: { name: true } },
         asset_units: true,
+        receive_item: {
+          select: {
+            expired_at: true,
+            receive_header: {
+              select: {
+                receive_batch: { select: { receive_date: true } },
+              },
+            },
+          },
+        },
       },
     }),
   ]);

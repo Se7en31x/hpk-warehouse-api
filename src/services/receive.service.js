@@ -65,6 +65,12 @@ const createReceive = async (data, userSession) => {
 
         if (header.status === RECEIVE_STATUS.COMPLETED) {
             if (header.type === ASSET_TYPE) {
+                let purchaseDateForAssets = null;
+                if (header.batch_id) {
+                    const batchRow = await receiveRepo.SelectBatchById(header.batch_id, tx);
+                    purchaseDateForAssets = batchRow?.receive_date || null;
+                }
+
                 const createdItems = await receiveRepo.selectReceiveItemsByHeader(header.id, tx);
                 const deptByItemId = new Map(
                     (data.items || []).map((it) => [it.item_id, it.department_id || null])
@@ -74,9 +80,11 @@ const createReceive = async (data, userSession) => {
                 );
 
                 for (const ri of createdItems) {
-                    const qty = Number(receiveItemsPayload.find((p) => p.item_id === ri.item_id)?.qty || 0);
+                    const line = receiveItemsPayload.find((p) => p.item_id === ri.item_id);
+                    const qty = Number(line?.qty || 0);
                     const deptId = deptByItemId.get(ri.item_id) || null;
                     const note = noteByItemId.get(ri.item_id) || null;
+                    const warrantyExpire = line?.expired_at || null;
 
                     for (let u = 0; u < qty; u++) {
                         const assetCode = await assetRepo.generateAssetCode(tx);
@@ -89,6 +97,8 @@ const createReceive = async (data, userSession) => {
                                 department_id: deptId,
                                 status: 'READY',
                                 note,
+                                purchase_date: purchaseDateForAssets,
+                                warranty_expire: warrantyExpire,
                             },
                             tx
                         );
@@ -299,6 +309,12 @@ const confirmReceive = async (headerId, itemsPayload = [], userSession = null) =
             throw createHttpError(400, 'No receive items found for this document');
         }
 
+        let batchReceiveDate = null;
+        if (currentHeader.batch_id) {
+            const batchRow = await receiveRepo.SelectBatchById(currentHeader.batch_id, tx);
+            batchReceiveDate = batchRow?.receive_date || null;
+        }
+
         const existingById = new Map();
         const existingByItemId = new Map();
 
@@ -360,9 +376,21 @@ const confirmReceive = async (headerId, itemsPayload = [], userSession = null) =
                     );
                 }
 
+                const assetWarrantyAt = payloadItem?.expired_at
+                    ? new Date(payloadItem.expired_at)
+                    : null;
+                if (payloadItem?.expired_at && Number.isNaN(assetWarrantyAt.getTime())) {
+                    throw createHttpError(
+                        400,
+                        `invalid expired_at (warranty) for item_id: ${existingItem.item_id}`
+                    );
+                }
                 await tx.receive_item.update({
                     where: { id: existingItem.id },
-                    data: { qty: actualQty },
+                    data: {
+                        qty: actualQty,
+                        expired_at: payloadItem?.expired_at ? assetWarrantyAt : null,
+                    },
                 });
 
                 for (const assetInput of assetsInput) {
@@ -376,6 +404,8 @@ const confirmReceive = async (headerId, itemsPayload = [], userSession = null) =
                             department_id: assetInput?.department_id || null,
                             status: 'READY',
                             note: assetInput?.note || null,
+                            purchase_date: batchReceiveDate,
+                            warranty_expire: assetWarrantyAt,
                         },
                         tx
                     );

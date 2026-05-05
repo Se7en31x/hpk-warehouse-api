@@ -7,6 +7,7 @@ const createReceiveBatchDTO = (data = {}, createdBy = null) => ({
     donor_name: data.donor_name || null,
     receive_date: data.receive_date ? new Date(data.receive_date) : new Date(),
     note: data.note || null,
+    delivery_doc_no: data.delivery_doc_no?.toString().trim() || null,
     created_by: createdBy || null,
 });
 
@@ -183,6 +184,7 @@ const mapReceiveBatchResponse = (batch = {}) => ({
     supplier_name: batch.supplier?.name || null,
     donor_name: batch.donor_name,
     receive_date: batch.receive_date,
+    delivery_doc_no: batch.delivery_doc_no ?? null,
     note: batch.note,
     created_by: batch.created_by,
     created_by_name: formatProfileDisplayName(batch.profiles) || null,

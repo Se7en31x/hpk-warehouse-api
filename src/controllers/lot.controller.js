@@ -107,10 +107,32 @@ const toggleStatus = async (req, res) => {
     }
 }
 
+const markUnusable = async (req, res) => {
+    try {
+        const { id } = req.params;
+        if (!id) {
+            return sendResponse(res, 400, "Invalid lot id");
+        }
+        const result = await lotService.markLotUnusable(id, req.body || {}, req.user || {});
+
+        req.io.emit('REFRESH_DATA', 'LOTS');
+        req.io.emit('REFRESH_DATA', 'ITEMS');
+        req.io.emit('REFRESH_DATA', 'STOCK_MOVEMENTS');
+
+        return sendResponse(res, 200, "mark lot unusable success", result);
+    } catch (error) {
+        if (error.message === 'Lot id not found') {
+            return sendResponse(res, 404, error.message);
+        }
+        return sendResponse(res, 400, error.message || "mark lot unusable failed");
+    }
+}
+
 module.exports = {
     getAllLots,
     getLotById,
     adjustLotStock,
     deleteLot,
     toggleStatus,
+    markUnusable,
 };

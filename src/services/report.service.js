@@ -20,6 +20,13 @@ const paginate = (page, limit) => ({
   totalPages: (total) => Math.max(1, Math.ceil(total / limit)),
 });
 
+/** Local midnight — same rule as dashboard expired-lot count (expired_at before today 00:00 server-local). */
+const startOfDay = (d) => {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+};
+
 // --- Service Functions ---
 
 const getStockBalanceReport = async ({ page, limit, warehouseId, search }) => {
@@ -62,7 +69,7 @@ const getStockMovementReport = async ({ page, limit, dateFrom, dateTo, itemId, w
     ...(type && { type }),
     ...(dateFrom || dateTo ? { created_at: repo.buildDateRange(dateFrom, dateTo) } : {}),
     ...(itemId && { item_id: itemId }),
-    ...(warehouseId && { items: { warehouse_id: Number(warehouseId) } }),
+    ...(warehouseId && { items: { warehouse_id: String(warehouseId) } }),
     ...(search && {
       OR: [
         { note: { contains: search, mode: 'insensitive' } },
@@ -106,14 +113,59 @@ const getStockMovementReport = async ({ page, limit, dateFrom, dateTo, itemId, w
   };
 };
 
-const getExpiredLotsReport = async ({ page, limit, dateTo, warehouseId, search }) => {
+const getExpiredLotsReport = async ({ page, limit, dateFrom, dateTo, warehouseId, search }) => {
   const { skip, totalPages } = paginate(page, limit);
-  const where = {
-    ...(dateTo && { expired_at: { lte: new Date(dateTo) } }),
-    ...(warehouseId && { warehouse_id: warehouseId }),
-    ...(search && { lot_code: { contains: search, mode: 'insensitive' } }),
-    deleted_at: null,
+  const todayStart = startOfDay(new Date());
+  const lastExpiredInstant = new Date(todayStart.getTime() - 1);
+
+  const expired_at = {
+    not: null,
+    lt:  todayStart,
+    ...(dateFrom || dateTo
+      ? (() => {
+          const dr = repo.buildDateRange(dateFrom, dateTo);
+          const extra = {};
+          if (dr?.gte) extra.gte = dr.gte;
+          if (dr?.lte) {
+            extra.lte =
+              dr.lte.getTime() <= lastExpiredInstant.getTime() ? dr.lte : lastExpiredInstant;
+          }
+          return extra;
+        })()
+      : {}),
   };
+
+  const andParts = [
+    { deleted_at: null },
+    { quantity: { gt: 0 } },
+    { expired_at },
+  ];
+  if (warehouseId) {
+    andParts.push({
+      OR: [
+        { warehouse_id: String(warehouseId) },
+        {
+          AND: [
+            { warehouse_id: null },
+            { items: { warehouse_id: String(warehouseId) } },
+          ],
+        },
+      ],
+    });
+  }
+  if (search) {
+    andParts.push({
+      OR: [
+        { lot_code: { contains: search, mode: 'insensitive' } },
+        { items: { name: { contains: search, mode: 'insensitive' } } },
+        { items: { code: { contains: search, mode: 'insensitive' } } },
+      ],
+    });
+  }
+  const where = andParts.length === 3
+    ? { ...andParts[0], ...andParts[1], ...andParts[2] }
+    : { AND: andParts };
+
   const { total, rows } = await repo.findExpiredLots({ skip, limit, where });
   return {
     items: rows.map(r => ({
@@ -121,7 +173,7 @@ const getExpiredLotsReport = async ({ page, limit, dateTo, warehouseId, search }
       lotCode:   r.lot_code,
       itemCode:  r.items?.code || '-',
       itemName:  r.items?.name || '-',
-      warehouse: r.warehouses?.name || '-',
+      warehouse: r.warehouses?.name || r.items?.warehouses?.name || 'ไม่ระบุคลัง',
       quantity:  safeNumber(r.quantity),
       unit:      r.items?.unit?.name || '-',
       expiredAt: toISODate(r.expired_at),
@@ -383,19 +435,36 @@ const getNearExpiryReport = async ({ page, limit, daysAhead = 90, warehouseId, s
   const now = new Date();
   const future = new Date(now.getTime() + Number(daysAhead) * 24 * 60 * 60 * 1000);
 
-  const where = {
-    deleted_at: null,
-    quantity:   { gt: 0 },
-    expired_at: { gte: now, lte: future },
-    ...(warehouseId && { warehouse_id: Number(warehouseId) }),
-    ...(search && {
+  const andParts = [
+    { deleted_at: null },
+    { quantity: { gt: 0 } },
+    { expired_at: { gte: now, lte: future } },
+  ];
+  if (warehouseId) {
+    andParts.push({
+      OR: [
+        { warehouse_id: String(warehouseId) },
+        {
+          AND: [
+            { warehouse_id: null },
+            { items: { warehouse_id: String(warehouseId) } },
+          ],
+        },
+      ],
+    });
+  }
+  if (search) {
+    andParts.push({
       OR: [
         { lot_code: { contains: search, mode: 'insensitive' } },
-        { items:    { name: { contains: search, mode: 'insensitive' } } },
-        { items:    { code: { contains: search, mode: 'insensitive' } } },
+        { items: { name: { contains: search, mode: 'insensitive' } } },
+        { items: { code: { contains: search, mode: 'insensitive' } } },
       ],
-    }),
-  };
+    });
+  }
+  const where = andParts.length === 3
+    ? { ...andParts[0], ...andParts[1], ...andParts[2] }
+    : { AND: andParts };
 
   const { total, rows } = await repo.findExpiredLots({ skip, limit, where });
   return {
@@ -403,13 +472,14 @@ const getNearExpiryReport = async ({ page, limit, daysAhead = 90, warehouseId, s
       const daysLeft = r.expired_at
         ? Math.ceil((new Date(r.expired_at).getTime() - now.getTime()) / 86400000)
         : null;
+      const warehouseName = r.warehouses?.name || r.items?.warehouses?.name || null;
       return {
         id:        String(r.id),
         lotCode:   r.lot_code,
         itemCode:  r.items?.code  || '-',
         itemName:  r.items?.name  || '-',
         category:  r.items?.categories ? r.items.categories.name : '-',
-        warehouse: r.warehouses?.name || '-',
+        warehouse: warehouseName || 'ไม่ระบุคลัง',
         quantity:  safeNumber(r.quantity),
         unit:      r.items?.unit?.name || '-',
         expiredAt: toISODate(r.expired_at),
@@ -424,8 +494,8 @@ const getNearExpiryReport = async ({ page, limit, daysAhead = 90, warehouseId, s
 const getInventoryBalanceSummary = async ({ search, warehouseId, categoryId }) => {
   const where = {
     deleted_at: null,
-    ...(warehouseId && { warehouse_id: Number(warehouseId) }),
-    ...(categoryId  && { category_id:  Number(categoryId) }),
+    ...(warehouseId && { warehouse_id: String(warehouseId) }),
+    ...(categoryId && { category_id: String(categoryId) }),
     ...(search && {
       OR: [
         { name: { contains: search, mode: 'insensitive' } },

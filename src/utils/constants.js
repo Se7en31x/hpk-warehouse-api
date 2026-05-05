@@ -1,7 +1,11 @@
 const LOT_STATUS = {
     ACTIVE: 'ACTIVE',
     SUSPENDED: 'SUSPENDED',
-    CANCELLED: 'CANCELLED'
+    CANCELLED: 'CANCELLED',
+    /** ยอดคงเหลือเป็น 0 จากการเบิกจนหมด — ไม่ใช่การยกเลิกล็อต */
+    DEPLETED: 'DEPLETED',
+    /** จำหน่ายทิ้ง / ของใช้ไม่ได้ / ห้ามจ่ายถาวร — ไม่ให้สลับสถานะกลับผ่าน toggle (แก้ได้ผ่านปรับสต็อก + ระบุเปิด ACTIVE) */
+    DISPOSED: 'DISPOSED',
 };
 
 const LOT_EXPIRY_STATUS = {

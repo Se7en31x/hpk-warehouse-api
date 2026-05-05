@@ -170,7 +170,7 @@ model stocks_movement {
   created_at     DateTime? @default(now()) @db.Timestamptz(6)
   balance_before Int?      @default(0)
   balance_after  Int?      @default(0)
-  items          items?    @relation(fields: [item_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "stock_movement_item_fk")
+  items          items?    @relation(fields: [item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "stock_movement_item_fk")
 
   @@schema("inventory")
 }
@@ -1181,6 +1181,7 @@ model receive_batch {
   created_by       String?          @db.Uuid
   created_at       DateTime?        @default(now()) @db.Timestamptz(6)
   updated_at       DateTime?        @default(now()) @db.Timestamptz(6)
+  delivery_doc_no  String?          @db.VarChar
   profiles         profiles?        @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   supplier         supplier?        @relation(fields: [supplier_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   receive_header   receive_header[]

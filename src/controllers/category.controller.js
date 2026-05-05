@@ -53,7 +53,11 @@ const createCategory = async (req, res) => {
 
 		return util.sendMutationResponse(res, 201, 'Create category success', newCategory?.id || null);
 	} catch (error) {
-		return util.sendResponse(res, 500, "failed to create category");
+		const status = Number(error?.statusCode) >= 400 && Number(error?.statusCode) < 600 ? Number(error.statusCode) : 500;
+		const msg = typeof error?.message === 'string' && error.message.trim()
+			? error.message
+			: (status === 409 ? 'ข้อมูลซ้ำกับรายการที่มีอยู่' : 'บันทึกหมวดหมู่ไม่สำเร็จ');
+		return util.sendResponse(res, status, msg);
 	}
 }
 
@@ -70,7 +74,11 @@ const updateCategory = async (req, res) => {
 
 		return util.sendMutationResponse(res, 200, 'Update category success', updatedCategory?.id || id);
 	} catch (error) {
-		return util.sendResponse(res, 500, "failed to update category");
+		const status = Number(error?.statusCode) >= 400 && Number(error?.statusCode) < 600 ? Number(error.statusCode) : 500;
+		const msg = typeof error?.message === 'string' && error.message.trim()
+			? error.message
+			: (status === 409 ? 'ข้อมูลซ้ำกับรายการที่มีอยู่' : 'แก้ไขหมวดหมู่ไม่สำเร็จ');
+		return util.sendResponse(res, status, msg);
 	}
 }
 

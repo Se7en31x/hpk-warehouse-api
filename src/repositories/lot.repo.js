@@ -55,6 +55,7 @@ const buildLotWhere = ({ keyword = '', warehouse_id = '', category_id = '', item
         const future = new Date();
         future.setDate(future.getDate() + normalizedExpiryDays);
         future.setHours(23, 59, 59, 999);
+        where.AND.push({ quantity: { gt: 0 } });
         where.AND.push({ expired_at: { not: null, gte: now, lte: future } });
     }
 
@@ -183,8 +184,16 @@ const selectLotByItemAndCode = async (itemId, lotCode, tx = prisma) => {
     });
 };
 
+/** ล็อต ACTIVE แต่ยอด 0 → เบิกหมดแล้ว (รองรับข้อมูลเก่าก่อนมี DEPLETED) */
+const closeZeroActiveLots = async () => {
+    return prisma.item_lots.updateMany({
+        where: { deleted_at: null, status: 'ACTIVE', quantity: 0 },
+        data: { status: 'DEPLETED', updated_at: new Date() },
+    });
+};
+
 const decrementLotQuantitySafe = async (lotId, qty, tx = prisma) => {
-    return tx.item_lots.updateMany({
+    const result = await tx.item_lots.updateMany({
         where: {
             id: lotId,
             quantity: { gte: qty },
@@ -196,6 +205,18 @@ const decrementLotQuantitySafe = async (lotId, qty, tx = prisma) => {
             },
         },
     });
+    if (result.count > 0) {
+        await tx.item_lots.updateMany({
+            where: {
+                id: lotId,
+                deleted_at: null,
+                quantity: 0,
+                status: 'ACTIVE',
+            },
+            data: { status: 'DEPLETED', updated_at: new Date() },
+        });
+    }
+    return result;
 };
 
 const updateLot = async (lotId, data, tx = prisma) => {
@@ -237,4 +258,5 @@ module.exports = {
     updateLot,
     withTransaction,
     suspendExpiredActiveLots,
+    closeZeroActiveLots,
 };

@@ -47,10 +47,32 @@ const selectOptions = () => prisma.categories.findMany({
 	select: { id: true, name: true, item_type: true }
 });
 
+/** ชื่อซ้ำ (ไม่นับรายการที่ถูกลบ soft และไม่นับ excludeId) */
+const findActiveCategoryByName = (name, excludeId = null) => {
+	const where = {
+		deleted_at: null,
+		name: { equals: (name || '').trim(), mode: 'insensitive' },
+	};
+	if (excludeId) where.NOT = { id: excludeId };
+	return prisma.categories.findFirst({ where });
+};
+
+/** คำนำหน้ารหัสซ้ำ (เทียบแบบ case-insensitive) */
+const findActiveCategoryByCodePrefix = (codePrefix, excludeId = null) => {
+	const where = {
+		deleted_at: null,
+		code_prefix: { equals: (codePrefix || '').trim(), mode: 'insensitive' },
+	};
+	if (excludeId) where.NOT = { id: excludeId };
+	return prisma.categories.findFirst({ where });
+};
+
 module.exports = {
 	SelectAllCategories,
 	SelectCategoryById,
 	createCategory,
 	updateCategory,
 	selectOptions,
+	findActiveCategoryByName,
+	findActiveCategoryByCodePrefix,
 }

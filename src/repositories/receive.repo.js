@@ -23,6 +23,7 @@ const buildBatchWhere = ({ keyword = '', type = '', status = '', start_date = ''
             OR: [
                 { batch_no: { contains: normalizedKeyword, mode: 'insensitive' } },
                 { donor_name: { contains: normalizedKeyword, mode: 'insensitive' } },
+                { delivery_doc_no: { contains: normalizedKeyword, mode: 'insensitive' } },
                 { note: { contains: normalizedKeyword, mode: 'insensitive' } },
                 { supplier: { name: { contains: normalizedKeyword, mode: 'insensitive' } } },
                 { receive_header: { some: { doc_no: { contains: normalizedKeyword, mode: 'insensitive' } } } },

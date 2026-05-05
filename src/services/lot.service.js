@@ -15,6 +15,7 @@ const getAllLots = async (query) => {
     const end_date = (query.end_date || '').toString().trim();
     const expiry_days = (query.expiry_days || '').toString().trim();
 
+    await lotRepo.closeZeroActiveLots();
     await lotRepo.suspendExpiredActiveLots();
 
     const [items, total] = await lotRepo.selectAllLot({
@@ -44,6 +45,7 @@ const getAllLots = async (query) => {
 }
 
 const getLotById = async (id) => {
+    await lotRepo.closeZeroActiveLots();
     await lotRepo.suspendExpiredActiveLots();
     const lot = await lotRepo.selectLotById(id);
     if (!lot) return null;
@@ -59,6 +61,7 @@ const getLotById = async (id) => {
 const resolveNote = (payload = {}) => payload.note || null;
 
 const adjustLotStock = async (lotId, payload, user = {}) => {
+    await lotRepo.closeZeroActiveLots();
     await lotRepo.suspendExpiredActiveLots();
     const existingLot = await lotRepo.selectLotById(lotId);
     if (!existingLot) throw new Error("Lot id not found");
@@ -97,7 +100,20 @@ const adjustLotStock = async (lotId, payload, user = {}) => {
     ].filter(Boolean).join(' | ');
 
     return lotRepo.withTransaction(async (tx) => {
-        const nextStatus = payload.status || existingLot.status;
+        let nextStatus = payload.status ?? existingLot.status;
+
+        if (existingLot.status === LOT_STATUS.DISPOSED) {
+            if (newQty > 0 && payload.status === LOT_STATUS.ACTIVE) {
+                nextStatus = LOT_STATUS.ACTIVE;
+            } else {
+                nextStatus = LOT_STATUS.DISPOSED;
+            }
+        } else if (newQty === 0 && existingLot.status !== LOT_STATUS.CANCELLED) {
+            nextStatus = LOT_STATUS.DEPLETED;
+        } else if (newQty > 0 && existingLot.status === LOT_STATUS.DEPLETED) {
+            nextStatus = LOT_STATUS.ACTIVE;
+        }
+
         const data = DTO.adjustLotDTO({
             new_quantity: newQty,
             note: userNote,
@@ -189,12 +205,21 @@ const deleteLot = async (lotId, user = {}) => {
 }
 
 const toggleLotStatus = async (lotId, user = {}) => {
+    await lotRepo.closeZeroActiveLots();
     await lotRepo.suspendExpiredActiveLots();
     const existingLot = await lotRepo.selectLotById(lotId);
     if (!existingLot) throw new Error("Lot id not found");
 
     if (existingLot.status === LOT_STATUS.CANCELLED) {
         throw new Error("Cannot toggle status of a CANCELLED (deleted) lot");
+    }
+
+    if (existingLot.status === LOT_STATUS.DISPOSED) {
+        throw new Error('ล็อตจำหน่ายทิ้งแล้ว (ห้ามใช้ถาวร) — ถ้าต้องนำกลับมาใช้ ให้ปรับสต็อกและระบุเปิดใช้งาน (status) ผ่าน API ปรับยอด');
+    }
+
+    if (existingLot.status === LOT_STATUS.DEPLETED) {
+        throw new Error('ล็อตเบิกหมดแล้ว กรุณาปรับเพิ่มจำนวนสต็อกก่อนเปิดใช้งาน');
     }
 
     const now = new Date();
@@ -206,6 +231,10 @@ const toggleLotStatus = async (lotId, user = {}) => {
 
     if (nextStatus === LOT_STATUS.ACTIVE && isExpired) {
         throw new Error('ไม่สามารถเปิดใช้งานล็อตที่หมดอายุแล้ว กรุณาปรับวันหมดอายุให้ยังไม่ถึงกำหนดก่อน');
+    }
+
+    if (nextStatus === LOT_STATUS.ACTIVE && Number(existingLot.quantity || 0) <= 0) {
+        throw new Error('ไม่สามารถเปิดใช้งานล็อตที่มียอดคงเหลือเป็น 0');
     }
 
     const STATUS_LABEL = { ACTIVE: 'เปิดใช้งาน', SUSPENDED: 'ระงับชั่วคราว' };
@@ -246,10 +275,83 @@ const toggleLotStatus = async (lotId, user = {}) => {
     });
 }
 
+/**
+ * จำหน่ายทิ้งล็อต — ห้ามใช้ถาวร (ทำลาย / ส่งคืนซัพพลายเออร์ / ของใช้ไม่ได้)
+ * → status DISPOSED — ห้ามสลับกลับด้วย toggle; คืนสู่ ACTIVE ได้ผ่าน adjust + ระบุ status ชัดเจน
+ * payload.reason บันทึกต่อท้าย note ของล็อต (แนะนำให้ UI บังคับระบุ)
+ */
+const markLotUnusable = async (lotId, payload = {}, user = {}) => {
+    await lotRepo.closeZeroActiveLots();
+    await lotRepo.suspendExpiredActiveLots();
+
+    const existingLot = await lotRepo.selectLotById(lotId);
+    if (!existingLot) throw new Error('Lot id not found');
+
+    if (existingLot.status === LOT_STATUS.CANCELLED) {
+        throw new Error('ล็อตถูกยกเลิกแล้ว');
+    }
+    if (existingLot.status === LOT_STATUS.DEPLETED) {
+        throw new Error('ล็อตเบิกหมดแล้ว ไม่สามารถนำไปจ่ายได้อยู่แล้ว');
+    }
+    if (existingLot.status === LOT_STATUS.DISPOSED) {
+        return {
+            ...DTO.mapLotItem(existingLot),
+            message: 'ล็อตนี้อยู่ในสถานะจำหน่ายทิ้ง (ห้ามใช้ถาวร) อยู่แล้ว',
+        };
+    }
+
+    const reason = (payload.reason || '').toString().trim();
+    if (!reason) {
+        throw new Error('กรุณาระบุเหตุผลหรือหมายเหตุการจำหน่ายทิ้ง');
+    }
+    if (reason.length < 3) {
+        throw new Error('หมายเหตุการจำหน่ายทิ้งต้องมีอย่างน้อย 3 ตัวอักษร');
+    }
+    const stamp  = new Date().toISOString();
+    const line   = `[จำหน่ายทิ้ง/ห้ามใช้ถาวร ${stamp}] ${reason}`;
+    const newNote = existingLot.note ? `${existingLot.note}\n${line}` : line;
+
+    const itemCode = existingLot.items?.code || '';
+    const itemName = existingLot.items?.name || '';
+    const lotCode  = existingLot.lot_code || '';
+
+    return lotRepo.withTransaction(async (tx) => {
+        await lotRepo.updateLot(
+            lotId,
+            { status: LOT_STATUS.DISPOSED, note: newNote, updated_at: new Date() },
+            tx
+        );
+
+        const currentStock = await stockMovementRepo.fetchItemCurrentStock(existingLot.item_id, tx);
+        await stockMovementRepo.createStockMovement({
+            item_id: existingLot.item_id,
+            lot_id: existingLot.id,
+            quantity: 0,
+            type: STOCK_MOVEMENT_TYPES.UPDATE,
+            note: [
+                `[จำหน่ายทิ้ง/ห้ามใช้ถาวร] ${[itemCode, itemName].filter(Boolean).join(' ')}`,
+                `ล็อต ${lotCode}`,
+                reason,
+            ].join(' | '),
+            created_by: user.email || null,
+            created_by_id: user.sub || null,
+            balance_before: currentStock,
+            balance_after: currentStock,
+        }, tx);
+
+        const updatedLot = await lotRepo.selectLotById(lotId, tx) || existingLot;
+        return {
+            ...DTO.mapLotItem(updatedLot),
+            message: 'ตั้งล็อตเป็นจำหน่ายทิ้งแล้ว — ห้ามใช้ในการจ่าย; ไม่สามารถสลับสถานะกลับผ่านปุ่มระงับ ต้องปรับยอดและระบุเปิด ACTIVE หากต้องแก้ไข',
+        };
+    });
+};
+
 module.exports = {
     getAllLots,
     getLotById,
     adjustLotStock,
     deleteLot,
     toggleLotStatus,
+    markLotUnusable,
 };

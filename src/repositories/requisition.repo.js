@@ -413,10 +413,18 @@ const SelectAllocationsForReqItem = async (reqItemId, tx = prisma) => {
 
 const incrementLotQuantity = async (lotId, qty, tx = prisma) => {
     if (!lotId) return null;
-    return tx.item_lots.update({
+    const row = await tx.item_lots.update({
         where: { id: lotId },
         data: { quantity: { increment: qty } },
+        select: { id: true, quantity: true, status: true },
     });
+    if (row && Number(row.quantity) > 0 && row.status === 'DEPLETED') {
+        await tx.item_lots.update({
+            where: { id: lotId },
+            data: { status: 'ACTIVE', updated_at: new Date() },
+        });
+    }
+    return row;
 };
 
 const softDeleteHeader = async (id, tx = prisma) => {

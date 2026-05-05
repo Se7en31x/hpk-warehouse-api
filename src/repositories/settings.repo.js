@@ -8,9 +8,9 @@ const DEFAULTS = {
   notify_expiring_days: { value: '30', type: 'number', label: 'แจ้งเตือนล็อตหมดอายุล่วงหน้า (วัน)', group: 'notification' },
   notify_low_stock_enabled: { value: 'true', type: 'boolean', label: 'เปิดแจ้งเตือนสต็อกต่ำ', group: 'notification' },
   notify_overdue_borrow_enabled: { value: 'true', type: 'boolean', label: 'เปิดแจ้งเตือนการยืมเกินกำหนด', group: 'notification' },
-  cron_expiring_schedule: { value: '5 0 * * *', type: 'string', label: 'ตารางเวลาตรวจล็อตหมดอายุ (cron)', group: 'schedule' },
-  cron_low_stock_schedule: { value: '10 0 * * *', type: 'string', label: 'ตารางเวลาตรวจสต็อกต่ำ (cron)', group: 'schedule' },
-  cron_overdue_schedule: { value: '15 0 * * *', type: 'string', label: 'ตารางเวลาตรวจการยืมเกินกำหนด (cron)', group: 'schedule' },
+  cron_expiring_schedule: { value: '5 0 * * *', type: 'string', label: 'เวลาแจ้งเตือล็อตหมดอายุอัตโนมัติ (ทุกวัน)', group: 'schedule' },
+  cron_low_stock_schedule: { value: '10 0 * * *', type: 'string', label: 'เวลาแจ้งเตือนสต็อกต่ำอัตโนมัติ (ทุกวัน)', group: 'schedule' },
+  cron_overdue_schedule: { value: '15 0 * * *', type: 'string', label: 'เวลาแจ้งเตือนการยืมเกินกำหนดอัตโนมัติ (ทุกวัน)', group: 'schedule' },
 };
 
 const getAllSettings = async () => {

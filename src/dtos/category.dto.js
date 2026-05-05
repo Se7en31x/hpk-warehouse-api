@@ -8,8 +8,8 @@ const normalizeItemType = (value) => {
 };
 
 const createCategoryDTO = (data = {}) => ({
-	name: data.name,
-	code_prefix: data.code_prefix,
+	name: (data.name || '').toString().trim(),
+	code_prefix: (data.code_prefix || '').toString().trim().toUpperCase(),
 	item_type: normalizeItemType(data.item_type),
 	description: data.description || null,
 });
@@ -18,10 +18,10 @@ const updateCategoryDTO = (data = {}) => {
 	const payload = {};
 
 	if (Object.prototype.hasOwnProperty.call(data, 'name')) {
-		payload.name = data.name;
+		payload.name = (data.name || '').toString().trim();
 	}
 	if (Object.prototype.hasOwnProperty.call(data, 'code_prefix')) {
-		payload.code_prefix = data.code_prefix;
+		payload.code_prefix = (data.code_prefix || '').toString().trim().toUpperCase();
 	}
 	if (Object.prototype.hasOwnProperty.call(data, 'description')) {
 		payload.description = data.description;

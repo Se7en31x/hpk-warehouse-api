@@ -72,6 +72,7 @@ const findExpiredLots = async ({ skip, limit, where }) => {
             id: true, code: true, name: true,
             unit:       { select: { name: true } },
             categories: { select: { name: true } },
+            warehouses: { select: { name: true } },
           },
         },
         warehouses: { select: { name: true } },
@@ -302,7 +303,7 @@ const findIssuedItemRanking = async ({ dateFrom, dateTo, categoryId, warehouseId
       issued_qty: { gt: 0 },
       items: {
         deleted_at: null,
-        ...(categoryId ? { category_id: parseInt(categoryId) } : {}),
+        ...(categoryId ? { category_id: categoryId } : {}),
         ...(warehouseId ? { warehouse_id: warehouseId } : {}),
       },
       requisition_header: headerWhere,
@@ -347,7 +348,7 @@ const findItemsByStock = async ({ categoryId, warehouseId, skip, limit }) => {
   const where = {
     deleted_at: null,
     status: 'ACTIVE',
-    ...(categoryId  ? { category_id: parseInt(categoryId) } : {}),
+    ...(categoryId  ? { category_id: categoryId } : {}),
     ...(warehouseId ? { warehouse_id: warehouseId }         : {}),
   };
   const [total, rows] = await Promise.all([
@@ -375,7 +376,7 @@ const findHistoricalInventoryByReceive = async ({ asOfDate, categoryId, warehous
 
   const itemFilter = {
     deleted_at: null,
-    ...(categoryId  ? { category_id: parseInt(categoryId) } : {}),
+    ...(categoryId  ? { category_id: categoryId } : {}),
     ...(warehouseId ? { warehouse_id: warehouseId }         : {}),
   };
 
@@ -460,7 +461,7 @@ const findInventoryValue = async ({ categoryId, warehouseId }) => {
     where: {
       deleted_at: null,
       status: 'ACTIVE',
-      ...(categoryId  ? { category_id: parseInt(categoryId) } : {}),
+      ...(categoryId  ? { category_id: categoryId } : {}),
       ...(warehouseId ? { warehouse_id: warehouseId }         : {}),
     },
     select: {
@@ -515,7 +516,7 @@ const findDeptConsumptionData = async ({ dateFrom, dateTo, categoryId }) => {
       },
       items: {
         deleted_at: null,
-        ...(categoryId ? { category_id: parseInt(categoryId) } : {}),
+        ...(categoryId ? { category_id: categoryId } : {}),
       },
     },
     select: {

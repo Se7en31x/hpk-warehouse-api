@@ -33,8 +33,8 @@ const getStockMovementReport = async (req, res, next) => {
 const getExpiredLotsReport = async (req, res, next) => {
   try {
     const { page, limit } = getPaginationParams(req.query);
-    const { dateTo, warehouseId, search } = req.query;
-    res.json(await service.getExpiredLotsReport({ page, limit, dateTo, warehouseId, search }));
+    const { dateFrom, dateTo, warehouseId, search } = req.query;
+    res.json(await service.getExpiredLotsReport({ page, limit, dateFrom, dateTo, warehouseId, search }));
   } catch (e) { next(e); }
 };
 

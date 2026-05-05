@@ -42,8 +42,8 @@ function setInCache(key, data) {
 
 async function getSummaryCounts() {
   const [totalItems, totalLots, totalDepartments, totalSuppliers, totalUsers] = await Promise.all([
-    prisma.items.count(),
-    prisma.item_lots.count(),
+    prisma.items.count({ where: { deleted_at: null } }),
+    prisma.item_lots.count({ where: { deleted_at: null, quantity: { gt: 0 } } }),
     prisma.departments.count(),
     prisma.supplier.count(),
     prisma.profiles.count(),
@@ -51,27 +51,30 @@ async function getSummaryCounts() {
   return { totalItems, totalLots, totalDepartments, totalSuppliers, totalUsers };
 }
 
-// OPTIMIZED: was a full table scan + O(n) JS loop.
-// Now: 3 parallel SQL aggregates — zero rows loaded into memory.
+// ล็อตที่ยังมีของคงเหลือ (quantity > 0) — ไม่รวมล็อตที่เบิกจนหมดแล้ว เพื่อไม่ให้ KPI สับสน
 async function getLotHealth({ expiryDays }) {
   const now = new Date();
   const threshold = addDays(now, expiryDays);
 
   const [totalResult, expiringCount, belowMinResult] = await Promise.all([
-    // Total active lots
-    prisma.item_lots.count({ where: { deleted_at: null } }),
+    prisma.item_lots.count({ where: { deleted_at: null, quantity: { gt: 0 } } }),
 
-    // Near-expiry count — DB-level filter, uses idx_item_lots_deleted_expired
+    // Near-expiry — เหมือน GET /v1/reports/near-expiry
     prisma.item_lots.count({
-      where: { deleted_at: null, expired_at: { not: null, lte: threshold } },
+      where: {
+        deleted_at: null,
+        quantity:   { gt: 0 },
+        expired_at: { not: null, gte: now, lte: threshold },
+      },
     }),
 
-    // Below-minimum count — requires JOIN with items; raw SQL is the cleanest path
+    // Below-minimum เฉพาะล็อตที่ยังมีของ (ไม่นับล็อตยอด 0 ที่ใช้หมดแล้ว)
     prisma.$queryRaw`
       SELECT COUNT(*)::int AS cnt
       FROM   inventory.item_lots  l
       JOIN   inventory.items      i ON i.id = l.item_id
       WHERE  l.deleted_at IS NULL
+        AND  COALESCE(l.quantity, 0) > 0
         AND  i.min_stock  > 0
         AND  l.quantity   < i.min_stock
     `,
@@ -92,10 +95,15 @@ async function getLotHealth({ expiryDays }) {
 }
 
 async function getExpiringLotsTop({ expiryDays, limit }) {
-  const threshold = addDays(new Date(), expiryDays);
+  const now = new Date();
+  const threshold = addDays(now, expiryDays);
 
   const rows = await prisma.item_lots.findMany({
-    where:   { deleted_at: null, expired_at: { not: null, lte: threshold } },
+    where: {
+      deleted_at: null,
+      quantity:   { gt: 0 },
+      expired_at: { not: null, gte: now, lte: threshold },
+    },
     orderBy: { expired_at: 'asc' },
     take:    limit,
     select: {
@@ -125,15 +133,28 @@ async function getExpiryStats({ expiryDays, months }) {
   const endMonth   = new Date(today.getFullYear(), today.getMonth() + 1, 1);
 
   // All three DB calls run in parallel
+  // expiredLots: same rules as GET /v1/reports/expired-lots (qty > 0, วันหมดก่อนเริ่มวันนี้ของเซิร์ฟเวอร์)
   const [expiredLots, nearExpiryLots, rows] = await Promise.all([
     prisma.item_lots.count({
-      where: { deleted_at: null, expired_at: { not: null, lt: today } },
+      where: {
+        deleted_at: null,
+        quantity:   { gt: 0 },
+        expired_at: { not: null, lt: today },
+      },
     }),
     prisma.item_lots.count({
-      where: { deleted_at: null, expired_at: { not: null, gte: today, lte: threshold } },
+      where: {
+        deleted_at: null,
+        quantity:   { gt: 0 },
+        expired_at: { not: null, gte: today, lte: threshold },
+      },
     }),
     prisma.item_lots.findMany({
-      where:  { deleted_at: null, expired_at: { not: null, gte: startMonth, lt: endMonth } },
+      where: {
+        deleted_at: null,
+        quantity:   { gt: 0 },
+        expired_at: { not: null, gte: startMonth, lt: endMonth },
+      },
       select: { expired_at: true },
     }),
   ]);

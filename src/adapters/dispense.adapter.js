@@ -55,7 +55,9 @@ const fireDispenseAdapter = async (header) => {
                 expiry_date: lot?.expired_at
                     ? new Date(lot.expired_at).toISOString().split('T')[0]
                     : null,
-                mfg_date:    null,
+                mfg_date: lot?.mfg_at
+                    ? new Date(lot.mfg_at).toISOString().split('T')[0]
+                    : null,
             });
         }
     }

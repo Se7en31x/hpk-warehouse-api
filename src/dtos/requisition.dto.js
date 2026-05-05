@@ -101,6 +101,7 @@ const mapRequisitionDetailResponse = (data) => {
                 lot_code: a.item_lot?.lot_code || null,
                 qty: a.qty,
                 expired_at: a.item_lot?.expired_at || null,
+                mfg_at: a.item_lot?.mfg_at || null,
             })),
             issued_units: [], // populated by service for REUSABLE items
         })),

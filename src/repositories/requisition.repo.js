@@ -203,7 +203,7 @@ const SelectRequisitionById = async (id, tx = prisma) => {
                     item_allocation: {
                         include: {
                             item_lot: {
-                                select: { lot_code: true, expired_at: true }
+                                select: { lot_code: true, expired_at: true, mfg_at: true }
                             }
                         }
                     },

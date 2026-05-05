@@ -146,6 +146,7 @@ model item_lots {
   created_at      DateTime?         @default(now()) @db.Timestamptz(6)
   updated_at      DateTime?         @default(now()) @updatedAt @db.Timestamptz(6)
   deleted_at      DateTime?         @db.Timestamptz(6)
+  mfg_at          DateTime?         @db.Timestamptz(6)
   item_allocation item_allocation[]
   items           items?            @relation(fields: [item_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "item_lot_item_fk")
   warehouses      warehouses?       @relation(fields: [warehouse_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "item_lot_warehouse_fk")

@@ -73,6 +73,7 @@ const lotSelect = {
     status: true,
     note: true,
     expired_at: true,
+    mfg_at: true,
     created_at: true,
     updated_at: true,
     item_id: true,

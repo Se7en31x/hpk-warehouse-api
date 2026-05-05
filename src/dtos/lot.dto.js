@@ -38,6 +38,7 @@ const mapLotItem = (lot = {}) => ({
     status: lot.status,
     expiry_status: calcExpiryStatus(lot.expired_at),
     expired_at: lot.expired_at,
+    mfg_at: lot.mfg_at ?? null,
     note: lot.note,
     created_at: lot.created_at,
     updated_at: lot.updated_at,

@@ -121,13 +121,18 @@ const createReceive = async (data, userSession) => {
                     }
                 }
             } else {
-                for (const item of receiveItemsPayload) {
+                for (let i = 0; i < receiveItemsPayload.length; i++) {
+                    const item = receiveItemsPayload[i];
+                    const srcLine = itemsWithLot[i] || {};
                     const balanceBefore = await stockMovementRepo.fetchItemCurrentStock(item.item_id, tx);
                     const qty = Number(item.qty);
 
                     if (qty <= 0) continue;
 
-                    const lotUpsertPayload = DTO.createLotUpsertDTO(item);
+                    const lotUpsertPayload = DTO.createLotUpsertDTO({
+                        ...item,
+                        mfg_at: srcLine.mfg_at ?? srcLine.mfgDate ?? null,
+                    });
                     const lot = await lotRepo.upsertItemLot(
                         {
                             where: lotUpsertPayload.where,
@@ -442,6 +447,7 @@ const confirmReceive = async (headerId, itemsPayload = [], userSession = null) =
                         qty: actualQty,
                         expired_at: payloadItem?.expired_at || null,
                         warehouse_id: payloadItem?.warehouse_id || null,
+                        mfg_at: payloadItem?.mfg_at ?? payloadItem?.mfgDate ?? null,
                     });
 
                     const lot = await lotRepo.upsertItemLot(

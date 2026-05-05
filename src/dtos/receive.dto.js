@@ -36,9 +36,16 @@ const createReceiveItemsDTO = (items = [], headerId) => {
     }));
 };
 
+const parseMfgAt = (v) => {
+    if (v === undefined || v === null || v === '') return null;
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? null : d;
+};
+
 const createLotUpsertDTO = (item = {}) => {
     const qty = Number(item.qty);
     const lotCode = item.lot_code.toString().trim();
+    const mfgAt = parseMfgAt(item.mfg_at);
 
     return {
         where: {
@@ -50,6 +57,7 @@ const createLotUpsertDTO = (item = {}) => {
         update: {
             quantity: { increment: qty },
             expired_at: item.expired_at ? new Date(item.expired_at) : undefined,
+            ...(mfgAt != null ? { mfg_at: mfgAt } : {}),
             warehouse_id: item.warehouse_id || undefined,
             status: 'ACTIVE',
             deleted_at: null,
@@ -61,6 +69,7 @@ const createLotUpsertDTO = (item = {}) => {
             quantity: qty,
             status: 'ACTIVE',
             expired_at: item.expired_at ? new Date(item.expired_at) : null,
+            mfg_at: mfgAt,
         },
     };
 };

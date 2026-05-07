@@ -196,6 +196,11 @@ const SelectRequisitionById = async (id, tx = prisma) => {
                                             deleted_at: null,
                                         },
                                     },
+                                    medical_assets: {
+                                        where: {
+                                            status: 'READY',
+                                        },
+                                    },
                                 },
                             },
                         },

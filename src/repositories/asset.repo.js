@@ -29,7 +29,8 @@ const createAsset = async (data, tx = prisma) => {
     return tx.medical_assets.create({ 
         data: {
             ...data,
-            department_id: data.department_id ? Number(data.department_id) : null
+            department_id: data.department_id ? Number(data.department_id) : null,
+            warehouse_id: data.warehouse_id || null,
         }, 
         include: assetInclude 
     });

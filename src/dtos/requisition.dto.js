@@ -88,10 +88,16 @@ const mapRequisitionDetailResponse = (data) => {
             unit_name: ri.items?.unit?.name || null,
             qty: ri.req_qty || 0,
             current_stock: ri.items?.current_stock || 0,
-            available_stock:
-                (ri.items?.type || '').toString().toUpperCase() === 'REUSABLE'
-                    ? Number(ri.items?._count?.reusable_item_units || 0)
-                    : Number(ri.items?.current_stock || 0),
+            available_stock: (() => {
+                const t = (ri.items?.type || '').toString().toUpperCase();
+                if (t === 'REUSABLE') {
+                    return Number(ri.items?._count?.reusable_item_units || 0);
+                }
+                if (t === 'MED_ASSET') {
+                    return Number(ri.items?._count?.medical_assets || 0);
+                }
+                return Number(ri.items?.current_stock || 0);
+            })(),
             approved: ri.approved_qty || 0,
             issued: ri.issued_qty || 0,
             returned: ri.returned_qty || 0,

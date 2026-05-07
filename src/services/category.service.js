@@ -16,6 +16,21 @@ const assertCategoryUnique = async ({ name, codePrefix, excludeId }) => {
 		err.statusCode = 409;
 		throw err;
 	}
+	/** Prefix ต้องไม่ไปชนกับชื่อหมวดอื่น / ชื่อต้องไม่ไปชนกับ prefix หมวดอื่น */
+	if (n && p) {
+		const prefixAsName = await categoryRepo.findActiveCategoryByName(p, excludeId);
+		if (prefixAsName) {
+			const err = new Error('Prefix Code นี้ตรงกับชื่อหมวดหมู่อื่น — กรุณาใช้รหัสอื่น');
+			err.statusCode = 409;
+			throw err;
+		}
+		const nameAsPrefix = await categoryRepo.findActiveCategoryByCodePrefix(n, excludeId);
+		if (nameAsPrefix) {
+			const err = new Error('ชื่อประเภทนี้ตรงกับ Prefix ของหมวดหมู่อื่น — กรุณาใช้ชื่ออื่น');
+			err.statusCode = 409;
+			throw err;
+		}
+	}
 };
 
 const getAllCategories = async ({ page = 1, limit = 10, keyword = '' } = {}) => {

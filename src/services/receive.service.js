@@ -72,8 +72,8 @@ const createReceive = async (data, userSession) => {
                 }
 
                 const createdItems = await receiveRepo.selectReceiveItemsByHeader(header.id, tx);
-                const deptByItemId = new Map(
-                    (data.items || []).map((it) => [it.item_id, it.department_id || null])
+                const warehouseByItemId = new Map(
+                    (data.items || []).map((it) => [it.item_id, it.warehouse_id || null])
                 );
                 const noteByItemId = new Map(
                     (data.items || []).map((it) => [it.item_id, it.note || null])
@@ -82,7 +82,7 @@ const createReceive = async (data, userSession) => {
                 for (const ri of createdItems) {
                     const line = receiveItemsPayload.find((p) => p.item_id === ri.item_id);
                     const qty = Number(line?.qty || 0);
-                    const deptId = deptByItemId.get(ri.item_id) || null;
+                    const whId = warehouseByItemId.get(ri.item_id) || null;
                     const note = noteByItemId.get(ri.item_id) || null;
                     const warrantyExpire = line?.expired_at || null;
 
@@ -94,7 +94,8 @@ const createReceive = async (data, userSession) => {
                                 item_id: ri.item_id,
                                 receive_item_id: ri.id,
                                 serial_no: null,
-                                department_id: deptId,
+                                department_id: null,
+                                warehouse_id: whId,
                                 status: 'READY',
                                 note,
                                 purchase_date: purchaseDateForAssets,
@@ -406,7 +407,8 @@ const confirmReceive = async (headerId, itemsPayload = [], userSession = null) =
                             item_id: existingItem.item_id,
                             receive_item_id: existingItem.id,
                             serial_no: assetInput?.serial_no || null,
-                            department_id: assetInput?.department_id || null,
+                            department_id: assetInput?.department_id ? Number(assetInput.department_id) : null,
+                            warehouse_id: assetInput?.warehouse_id || null,
                             status: 'READY',
                             note: assetInput?.note || null,
                             purchase_date: batchReceiveDate,

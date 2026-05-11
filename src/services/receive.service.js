@@ -72,9 +72,6 @@ const createReceive = async (data, userSession) => {
                 }
 
                 const createdItems = await receiveRepo.selectReceiveItemsByHeader(header.id, tx);
-                const warehouseByItemId = new Map(
-                    (data.items || []).map((it) => [it.item_id, it.warehouse_id || null])
-                );
                 const noteByItemId = new Map(
                     (data.items || []).map((it) => [it.item_id, it.note || null])
                 );
@@ -82,7 +79,6 @@ const createReceive = async (data, userSession) => {
                 for (const ri of createdItems) {
                     const line = receiveItemsPayload.find((p) => p.item_id === ri.item_id);
                     const qty = Number(line?.qty || 0);
-                    const whId = warehouseByItemId.get(ri.item_id) || null;
                     const note = noteByItemId.get(ri.item_id) || null;
                     const warrantyExpire = line?.expired_at || null;
 
@@ -95,7 +91,6 @@ const createReceive = async (data, userSession) => {
                                 receive_item_id: ri.id,
                                 serial_no: null,
                                 department_id: null,
-                                warehouse_id: whId,
                                 status: 'READY',
                                 note,
                                 purchase_date: purchaseDateForAssets,
@@ -197,7 +192,50 @@ const getBatchById = async (batchId) => {
     if (!batch) {
         throw createHttpError(404, 'Receive batch not found');
     }
-    return DTO.mapReceiveBatchResponse(batch);
+
+    /**
+     * Enrich consumable lot ของ receive_item ที่มี lot_code
+     * ดึง lot record จริงจาก inventory.item_lots เพื่อใช้พิมพ์บาร์โค้ด
+     * และอ้างอิง lot_id ในหน้าหรืออนาคต (เช่น link ไป /warehouse/lots/[id])
+     */
+    const lotPairs = [];
+    (batch.receive_header || []).forEach((header) => {
+        if (header.type === ASSET_TYPE || header.type === 'REUSABLE_UNIT') return;
+        (header.receive_item || []).forEach((ri) => {
+            if (ri.lot_code && ri.item_id) {
+                lotPairs.push({ item_id: ri.item_id, lot_code: ri.lot_code });
+            }
+        });
+    });
+
+    let lotMap = new Map();
+    if (lotPairs.length > 0) {
+        const lots = await lotRepo.selectLotsByItemCodePairs(lotPairs);
+        lotMap = new Map(
+            lots.map((l) => [`${l.item_id}::${l.lot_code}`, l])
+        );
+    }
+
+    const mapped = DTO.mapReceiveBatchResponse(batch);
+    /** ฉีดข้อมูล lot ลง response (frontend ใช้พิมพ์บาร์โค้ด + ลิงก์) */
+    mapped.headers.forEach((header) => {
+        (header.receive_item || []).forEach((ri) => {
+            if (!ri.lot_code) return;
+            const lot = lotMap.get(`${ri.item_id}::${ri.lot_code}`);
+            if (lot) {
+                ri.lot = {
+                    id: lot.id,
+                    lot_code: lot.lot_code,
+                    quantity: lot.quantity,
+                    status: lot.status,
+                    expired_at: lot.expired_at,
+                    mfg_at: lot.mfg_at,
+                };
+            }
+        });
+    });
+
+    return mapped;
 };
 
 // ── Cancel Header ──────────────────────────────────────────────────────────────
@@ -408,7 +446,6 @@ const confirmReceive = async (headerId, itemsPayload = [], userSession = null) =
                             receive_item_id: existingItem.id,
                             serial_no: assetInput?.serial_no || null,
                             department_id: assetInput?.department_id ? Number(assetInput.department_id) : null,
-                            warehouse_id: assetInput?.warehouse_id || null,
                             status: 'READY',
                             note: assetInput?.note || null,
                             purchase_date: batchReceiveDate,

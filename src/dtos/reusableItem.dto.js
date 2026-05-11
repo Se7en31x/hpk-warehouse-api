@@ -75,6 +75,17 @@ const mapReusableUnitResponse = (unit = {}) => ({
     updated_at: unit.updated_at,
 });
 
+const parseAttachmentList = (raw) => {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    try {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+};
+
 /**
  * 📤 [RESPONSE MAPPER] สำหรับคำขอคืน (Return Request)
  */
@@ -98,11 +109,15 @@ const mapReturnRequestResponse = (request = {}) => ({
         item_id: item.item_id,
         item_code: item.items?.code || null,
         item_name: item.items?.name || null,
+        item_image_url: item.items?.image_url || null,
+        item_unit_name: item.items?.unit?.name || null,
         category_name: item.items?.categories?.name || null,
         requested_qty: item.requested_qty,
         note: item.note || null,
         requested_unit_codes: parseRequestedUnitCodes(item.note),
     })),
+    submit_attachments: parseAttachmentList(request.submit_attachments),
+    process_attachments: parseAttachmentList(request.process_attachments),
 });
 
 module.exports = {

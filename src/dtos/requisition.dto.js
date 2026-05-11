@@ -31,6 +31,18 @@ const createItemsDTO = (items, headerId) => {
     }));
 };
 
+/** Parse JSONB attachment column to array (handles legacy string format too). */
+const parseAttachmentList = (raw) => {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    try {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+};
+
 /**
  * 📤 [OUTPUT - LIST] สำหรับหน้าตาราง
  */
@@ -111,7 +123,9 @@ const mapRequisitionDetailResponse = (data) => {
             })),
             issued_units: [], // populated by service for REUSABLE items
         })),
-        borrower_details: data.borrower_details || null
+        borrower_details: data.borrower_details || null,
+        return_submit_attachments: parseAttachmentList(data.return_submit_attachments),
+        return_verify_attachments: parseAttachmentList(data.return_verify_attachments),
     };
 };
 

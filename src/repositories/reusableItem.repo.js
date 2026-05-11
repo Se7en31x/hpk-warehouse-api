@@ -48,7 +48,9 @@ const returnRequestInclude = {
                     id: true,
                     code: true,
                     name: true,
+                    image_url: true,
                     categories: { select: { name: true } },
+                    unit: { select: { name: true } },
                 },
             },
         },
@@ -262,6 +264,39 @@ const selectReturnRequestById = async (id, tx = prisma) => {
 };
 
 /**
+ * ดึง log ล่าสุดของ action RETURN_WITHDRAW_REUSABLE สำหรับ doc_no ที่ระบุ
+ * พร้อมชื่อโปรไฟล์ผู้ดำเนินการ — ใช้แสดงผู้รับคืน (audit trail) ในหน้ารายละเอียด
+ */
+const selectLatestReturnProcessLog = async (docNo, tx = prisma) => {
+    if (!docNo) return null;
+    const log = await tx.reusable_item_unit_logs.findFirst({
+        where: {
+            action: 'RETURN_WITHDRAW_REUSABLE',
+            ref_doc_no: docNo,
+        },
+        orderBy: { created_at: 'desc' },
+        select: {
+            performed_by: true,
+            created_at: true,
+        },
+    });
+    if (!log?.performed_by) return log || null;
+
+    const profile = await tx.profiles.findUnique({
+        where: { id: log.performed_by },
+        select: { firstname_th: true, lastname_th: true, email: true },
+    });
+    const fullName = [profile?.firstname_th, profile?.lastname_th]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+    return {
+        ...log,
+        performed_by_name: fullName || profile?.email || null,
+    };
+};
+
+/**
  * @param {object} opts
  * @param {number}      opts.page
  * @param {number}      opts.limit
@@ -326,6 +361,27 @@ const updateReturnRequestById = async (id, data, tx = prisma) => {
     });
 };
 
+// --- Return attachment helpers ---
+// field: 'submit_attachments' (department staff) | 'process_attachments' (warehouse staff)
+const getReturnRequestAttachments = async (id, field, tx = prisma) => {
+    const row = await tx.reusable_return_requests.findUnique({
+        where: { id: Number(id) },
+        select: { id: true, [field]: true },
+    });
+    return row;
+};
+
+const updateReturnRequestAttachments = async (id, field, attachments, tx = prisma) => {
+    return tx.reusable_return_requests.update({
+        where: { id: Number(id) },
+        data: {
+            [field]: attachments,
+            updated_at: new Date(),
+        },
+        select: { id: true, [field]: true },
+    });
+};
+
 const selectInUseWithdrawUnitsByDeptAndItem = async ({ departmentId, itemId, take = 0 } = {}, tx = prisma) => {
     return tx.reusable_item_units.findMany({
         where: {
@@ -385,6 +441,8 @@ const selectUnitsByCodes = async ({ departmentId = null, unitCodes = [] } = {}, 
                     id: true,
                     code: true,
                     name: true,
+                    image_url: true,
+                    unit: { select: { name: true } },
                 },
             },
             movement_logs: {
@@ -577,8 +635,11 @@ module.exports = {
     createReturnRequestHeader,
     createReturnRequestItems,
     selectReturnRequestById,
+    selectLatestReturnProcessLog,
     selectReturnRequests,
     updateReturnRequestById,
+    getReturnRequestAttachments,
+    updateReturnRequestAttachments,
     selectInUseWithdrawUnitsByDeptAndItem,
     selectUnitsByCodes,
     selectUnitByBarcodeValue,

@@ -153,6 +153,35 @@ const formatProfileDisplayName = (p) => {
 
 const mapReceiveItemResponse = (item = {}) => {
     const categoryName = item.items?.categories?.name || null;
+
+    /**
+     * รวม units ของ MED_ASSET (medical_assets) และ REUSABLE (reusable_item_units)
+     * ส่งให้ frontend ในรูป array เดียว ใช้พิมพ์บาร์โค้ดที่หน้ารายละเอียด
+     */
+    const units = [];
+    if (Array.isArray(item.medical_assets)) {
+        item.medical_assets.forEach((u) => {
+            units.push({
+                id: u.id,
+                code: u.asset_code,
+                serial_no: u.serial_no || null,
+                status: u.status || null,
+                kind: 'MED_ASSET',
+            });
+        });
+    }
+    if (Array.isArray(item.reusable_item_units)) {
+        item.reusable_item_units.forEach((u) => {
+            units.push({
+                id: u.id,
+                code: u.unit_code,
+                serial_no: u.serial_no || null,
+                status: u.status || null,
+                kind: 'REUSABLE',
+            });
+        });
+    }
+
     return {
         id: item.id,
         header_id: item.header_id,
@@ -166,6 +195,7 @@ const mapReceiveItemResponse = (item = {}) => {
         qty: item.qty,
         cost_price: item.cost_price,
         expired_at: item.expired_at,
+        units,
     };
 };
 

@@ -78,6 +78,41 @@ const batchInclude = {
     },
 };
 
+/**
+ * include ที่หนาขึ้น สำหรับหน้ารายละเอียด batch (ใช้พิมพ์บาร์โค้ด)
+ * — ดึง medical_assets / reusable_item_units ของแต่ละ receive_item มาด้วย
+ */
+const batchDetailInclude = {
+    supplier: { select: { id: true, name: true } },
+    profiles: {
+        select: {
+            firstname_th: true,
+            lastname_th: true,
+            firstname_en: true,
+            lastname_en: true,
+        },
+    },
+    receive_header: {
+        include: {
+            receive_item: {
+                include: {
+                    items: receiveItemItemsInclude,
+                    medical_assets: {
+                        select: { id: true, asset_code: true, serial_no: true, status: true },
+                        orderBy: { asset_code: 'asc' },
+                    },
+                    reusable_item_units: {
+                        select: { id: true, unit_code: true, serial_no: true, status: true },
+                        orderBy: { unit_code: 'asc' },
+                    },
+                },
+                orderBy: { id: 'asc' },
+            },
+        },
+        orderBy: { id: 'asc' },
+    },
+};
+
 // ── Transactions ───────────────────────────────────────────────────────────────
 
 const withTransaction = async (callback) => {
@@ -95,7 +130,7 @@ const createReceiveBatch = async (data, tx = prisma) => {
 const SelectBatchById = async (batchId, tx = prisma) => {
     return tx.receive_batch.findUnique({
         where: { id: batchId },
-        include: batchInclude,
+        include: batchDetailInclude,
     });
 };
 

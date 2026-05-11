@@ -123,7 +123,10 @@ const enrichReturnRequestWithUnitDetails = async (mappedRequest, tx = null) => {
                         unit_code: code,
                         serial_no: unit?.serial_no || null,
                         item_id: unit?.item_id || item.item_id,
+                        item_code: unit?.items?.code || item.item_code || null,
                         item_name: unit?.items?.name || item.item_name || null,
+                        item_image_url: unit?.items?.image_url || item.item_image_url || null,
+                        item_unit_name: unit?.items?.unit?.name || item.item_unit_name || null,
                         status: unit?.status || null,
                         condition: unit?.condition || null,
                         is_found: Boolean(unit),
@@ -191,7 +194,6 @@ const createReusableReceive = async (data, userSession) => {
                     receive_item_id: receiveItemByItemId.get(item.item_id)?.id || null,
                     serial_no: unit.serial_no || null,
                     department_id: unit.department_id ? Number(unit.department_id) : null,
-                    warehouse_id: unit.warehouse_id || null,
                     status: (unit.status || DEFAULT_STATUS).toUpperCase(),
                     condition: (unit.condition || DEFAULT_CONDITION).toUpperCase(),
                     note: unit.note || null,
@@ -210,7 +212,6 @@ const createReusableReceive = async (data, userSession) => {
             receive_item_id: unit.receive_item_id,
             serial_no: unit.serial_no,
             department_id: unit.department_id,
-            warehouse_id: unit.warehouse_id || null,
             status: unit.status,
             condition: unit.condition,
             note: unit.note,
@@ -615,7 +616,24 @@ const getReturnRequestById = async (id) => {
     }
 
     const mapped = DTO.mapReturnRequestResponse(request);
-    return enrichReturnRequestWithUnitDetails(mapped);
+    const enriched = await enrichReturnRequestWithUnitDetails(mapped);
+
+    // เติมข้อมูลผู้ดำเนินการรับคืน (ดึงจาก log ล่าสุดของใบนี้)
+    enriched.processed_by = null;
+    enriched.processed_by_name = null;
+    enriched.processed_at = null;
+    try {
+        const log = await reusableRepo.selectLatestReturnProcessLog(request.doc_no);
+        if (log?.performed_by) {
+            enriched.processed_by = log.performed_by;
+            enriched.processed_by_name = log.performed_by_name || null;
+            enriched.processed_at = log.created_at || null;
+        }
+    } catch {
+        /* ignore: optional enrichment */
+    }
+
+    return enriched;
 };
 
 const processReturnRequest = async (id, payload = {}, userSession = null) => {

@@ -185,6 +185,34 @@ const selectLotByItemAndCode = async (itemId, lotCode, tx = prisma) => {
     });
 };
 
+/**
+ * Batch fetch lots ตาม pairs ของ (item_id, lot_code)
+ * ใช้ enrich หน้ารายละเอียดการรับเข้า เพื่อให้รู้ lot_id + ข้อมูลล็อตจริง
+ */
+const selectLotsByItemCodePairs = async (pairs = [], tx = prisma) => {
+    const valid = (pairs || []).filter(
+        (p) => p && p.item_id && p.lot_code
+    );
+    if (valid.length === 0) return [];
+    return tx.item_lots.findMany({
+        where: {
+            OR: valid.map((p) => ({
+                item_id: p.item_id,
+                lot_code: p.lot_code,
+            })),
+        },
+        select: {
+            id: true,
+            item_id: true,
+            lot_code: true,
+            quantity: true,
+            status: true,
+            expired_at: true,
+            mfg_at: true,
+        },
+    });
+};
+
 /** ล็อต ACTIVE แต่ยอด 0 → เบิกหมดแล้ว (รองรับข้อมูลเก่าก่อนมี DEPLETED) */
 const closeZeroActiveLots = async () => {
     return prisma.item_lots.updateMany({
@@ -255,6 +283,7 @@ module.exports = {
     selectLotMovementHistory,
     upsertItemLot,
     selectLotByItemAndCode,
+    selectLotsByItemCodePairs,
     decrementLotQuantitySafe,
     updateLot,
     withTransaction,

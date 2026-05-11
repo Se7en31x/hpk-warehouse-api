@@ -90,6 +90,10 @@ model requisition_header {
   updated_at                                         DateTime?          @default(now()) @updatedAt @db.Timestamptz(6)
   borrower_id                                        String?            @db.Uuid
   department_id                                      Int?
+  /// เอกสาร/รูปการคืน: ผู้ยืมแนบตอน submit return (BORROW). JSON array ของ {url, public_id, filename, uploaded_at}
+  return_submit_attachments                          Json?              @db.JsonB
+  /// เอกสาร/รูปการคืน: เจ้าหน้าที่คลังถ่ายตอน verify return. JSON array ของ {url, public_id, filename, uploaded_at}
+  return_verify_attachments                          Json?              @db.JsonB
   profiles_requisition_header_approver_idToprofiles  profiles?          @relation("requisition_header_approver_idToprofiles", fields: [approver_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_req_header_approver")
   departments                                        departments?       @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_department")
   profiles_requisition_header_requester_idToprofiles profiles           @relation("requisition_header_requester_idToprofiles", fields: [requester_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_req_header_requester")
@@ -147,6 +151,7 @@ model item_lots {
   updated_at      DateTime?         @default(now()) @updatedAt @db.Timestamptz(6)
   deleted_at      DateTime?         @db.Timestamptz(6)
   mfg_at          DateTime?         @db.Timestamptz(6)
+  cost_price      Decimal?          @db.Decimal
   item_allocation item_allocation[]
   items           items?            @relation(fields: [item_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "item_lot_item_fk")
   warehouses      warehouses?       @relation(fields: [warehouse_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "item_lot_warehouse_fk")
@@ -189,17 +194,15 @@ model units {
 }
 
 model warehouses {
-  id                  String                  @id(map: "warehouse_pkey") @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name                String
-  location            String?
-  created_at          DateTime?               @default(now()) @db.Timestamptz(6)
-  updated_at          DateTime?               @default(now()) @updatedAt @db.Timestamptz(6)
-  description         String?
-  deleted_at          DateTime?               @db.Timestamptz(6)
-  item_lots           item_lots[]
-  items               items[]
-  medical_assets      medical_assets[]
-  reusable_item_units reusable_item_units[]
+  id          String      @id(map: "warehouse_pkey") @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  location    String?
+  created_at  DateTime?   @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime?   @default(now()) @updatedAt @db.Timestamptz(6)
+  description String?
+  deleted_at  DateTime?   @db.Timestamptz(6)
+  item_lots   item_lots[]
+  items       items[]
 
   @@schema("inventory")
 }
@@ -234,6 +237,10 @@ model reusable_return_requests {
   created_at          DateTime                        @default(now()) @db.Timestamptz(6)
   updated_at          DateTime                        @default(now()) @updatedAt @db.Timestamptz(6)
   deleted_at          DateTime?                       @db.Timestamptz(6)
+  /// เอกสาร/รูปการคืน: แผนกแนบตอนสร้างคำขอคืน. JSON array ของ {url, public_id, filename, uploaded_at}
+  submit_attachments  Json?                           @db.JsonB
+  /// เอกสาร/รูปการคืน: เจ้าหน้าที่คลังถ่ายตอนรับคืน (process). JSON array ของ {url, public_id, filename, uploaded_at}
+  process_attachments Json?                           @db.JsonB
   request_items       reusable_return_request_items[]
   profiles            profiles?                       @relation(fields: [requested_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_requester_id")
   departments         departments                     @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reusable_return_request_department")
@@ -372,22 +379,20 @@ model medical_assets {
   receive_item_id Int?
   serial_no       String?       @db.VarChar(100)
   department_id   Int?
-  warehouse_id    String?       @db.Uuid
   status          String        @default("READY") @db.VarChar(20)
   purchase_date   DateTime?     @db.Timestamptz(6)
   warranty_expire DateTime?     @db.Timestamptz(6)
   note            String?
   created_at      DateTime?     @default(now()) @db.Timestamptz(6)
   updated_at      DateTime?     @default(now()) @updatedAt @db.Timestamptz(6)
+  warehouse_id    String?       @db.Uuid
   asset_units     asset_units[]
   departments     departments?  @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_asset_department")
-  warehouses      warehouses?   @relation(fields: [warehouse_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_medical_assets_warehouse")
   items           items         @relation(fields: [item_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_asset_item")
   receive_item    receive_item? @relation(fields: [receive_item_id], references: [id], onUpdate: NoAction, map: "fk_asset_receive_item")
 
   @@index([asset_code], map: "idx_medical_assets_asset_code")
   @@index([department_id], map: "idx_medical_assets_dept_id")
-  @@index([warehouse_id], map: "idx_medical_assets_warehouse_id")
   @@index([item_id], map: "idx_medical_assets_item_id")
   @@index([status], map: "idx_medical_assets_status")
   @@schema("inventory")
@@ -409,12 +414,10 @@ model reusable_item_units {
   warehouse_id    String?                   @db.Uuid
   movement_logs   reusable_item_unit_logs[]
   departments     departments?              @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_department")
-  warehouses      warehouses?               @relation(fields: [warehouse_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reusable_unit_warehouse")
   items           items                     @relation(fields: [item_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reusable_unit_item")
   receive_item    receive_item?             @relation(fields: [receive_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_reusable_unit_receive_item")
 
   @@index([item_id], map: "idx_reusable_units_item_id")
-  @@index([warehouse_id], map: "idx_reusable_units_warehouse_id")
   @@index([status], map: "idx_reusable_units_status")
   @@schema("inventory")
 }

@@ -432,6 +432,27 @@ const incrementLotQuantity = async (lotId, qty, tx = prisma) => {
     return row;
 };
 
+// --- Return attachment helpers ---
+// field: 'return_submit_attachments' (requester) | 'return_verify_attachments' (warehouse staff)
+const getRequisitionAttachments = async (id, field, tx = prisma) => {
+    const row = await tx.requisition_header.findUnique({
+        where: { id: Number(id) },
+        select: { id: true, [field]: true },
+    });
+    return row;
+};
+
+const updateRequisitionAttachments = async (id, field, attachments, tx = prisma) => {
+    return tx.requisition_header.update({
+        where: { id: Number(id) },
+        data: {
+            [field]: attachments,
+            updated_at: new Date(),
+        },
+        select: { id: true, [field]: true },
+    });
+};
+
 const softDeleteHeader = async (id, tx = prisma) => {
     return tx.requisition_header.update({
         where: { id: Number(id) },
@@ -485,6 +506,8 @@ module.exports = {
     updateRequisitionItem,
     updateHeaderStatus,
     softDeleteHeader,
+    getRequisitionAttachments,
+    updateRequisitionAttachments,
     SelectActiveBorrows,
     SelectAllocationsForReqItem,
     incrementLotQuantity,

@@ -426,6 +426,7 @@ const getAssetReport = async ({ page, limit, search, status, departmentId }) => 
       status:         r.status,
       purchaseDate:   toISODate(purchaseSrc),
       warrantyExpire: toISODate(warrantySrc),
+      purchasePrice:  Number(r.receive_item?.cost_price ?? 0),
       unitCount:      r.asset_units?.length || 0,
       note:           r.note || '',
       createdAt:      toISODate(r.created_at),
@@ -623,50 +624,6 @@ const getReceiveReportData = async ({ page, limit, dateFrom, dateTo, search, sup
 
 // ─── Phase 1: New report services ─────────────────────────────────────────────
 
-const getOverdueBorrows = async ({ page, limit, dateFrom, dateTo, departmentId, search }) => {
-  const { skip, totalPages } = paginate(page, limit);
-  const now = new Date();
-  const where = {
-    status: 'BORROWING',
-    due_date: { lt: now },
-    ...(dateFrom || dateTo ? { due_date: { lt: now, ...repo.buildDateRange(dateFrom, dateTo) } } : {}),
-    ...(departmentId ? { department_id: Number(departmentId) } : {}),
-    ...(search ? {
-      OR: [
-        { doc_no:       { contains: search, mode: 'insensitive' } },
-        { departments:  { name: { contains: search, mode: 'insensitive' } } },
-      ],
-    } : {}),
-  };
-  const { total, rows } = await repo.findOverdueBorrows({ skip, limit, where });
-  return {
-    items: rows.map(r => {
-      const daysOverdue = r.due_date
-        ? Math.ceil((now.getTime() - new Date(r.due_date).getTime()) / 86400000)
-        : null;
-      const requester = r.profiles_requisition_header_requester_idToprofiles;
-      return {
-        id:          String(r.id),
-        docNo:       r.doc_no || '-',
-        requester:   formatProfileName(requester),
-        department:  r.departments?.name || '-',
-        dueDate:     toISODate(r.due_date),
-        daysOverdue,
-        status:      r.status,
-        items: (r.requisition_item || []).map(it => ({
-          id:       String(it.id),
-          itemCode: it.items?.code || '-',
-          itemName: it.items?.name || '-',
-          qty:      safeNumber(it.req_qty),
-          issued:   safeNumber(it.issued_qty),
-          unit:     it.items?.unit?.name || '-',
-        })),
-      };
-    }),
-    total, page, limit, totalPages: totalPages(total),
-  };
-};
-
 const getItemRanking = async ({ mode = 'issued', dateFrom, dateTo, categoryId, warehouseId, page, limit }) => {
   const { skip, totalPages } = paginate(page, limit);
   if (mode === 'issued') {
@@ -777,34 +734,6 @@ const getInventoryValue = async ({ categoryId, warehouseId, asOfDate }) => {
   };
 };
 
-const getReturnCondition = async ({ page, limit, dateFrom, dateTo, search }) => {
-  const { skip, totalPages } = paginate(page, limit);
-  const where = {
-    ...(dateFrom || dateTo ? { return_date: repo.buildDateRange(dateFrom, dateTo) } : {}),
-    ...(search ? {
-      OR: [
-        { requisition_item: { items: { name: { contains: search, mode: 'insensitive' } } } },
-        { requisition_item: { items: { code: { contains: search, mode: 'insensitive' } } } },
-      ],
-    } : {}),
-  };
-  const { total, rows } = await repo.findReturnConditionData({ skip, limit, where });
-  return {
-    items: rows.map(r => ({
-      id:         String(r.id),
-      returnDate: toISODate(r.return_date),
-      itemCode:   r.requisition_item?.items?.code || '-',
-      itemName:   r.requisition_item?.items?.name || '-',
-      unit:       r.requisition_item?.items?.unit?.name || '-',
-      category:   r.requisition_item?.items?.categories?.name || '-',
-      qty:        safeNumber(r.return_qty),
-      condition:  r.condition || '-',
-      note:       r.note || '',
-    })),
-    total, page, limit, totalPages: totalPages(total),
-  };
-};
-
 const getDeptConsumption = async ({ dateFrom, dateTo, categoryId, departmentId }) => {
   const rows = await repo.findDeptConsumptionData({ dateFrom, dateTo, categoryId });
   // Group by department
@@ -887,9 +816,7 @@ module.exports = {
   getInventoryBalanceSummary,
   getReceiveReportData,
   // Phase 1
-  getOverdueBorrows,
   getItemRanking,
   getInventoryValue,
-  getReturnCondition,
   getDeptConsumption,
 };

@@ -206,6 +206,7 @@ const findAssets = async ({ skip, limit, where }) => {
         receive_item: {
           select: {
             expired_at: true,
+            cost_price: true,
             receive_header: {
               select: {
                 receive_batch: { select: { receive_date: true } },
@@ -276,31 +277,6 @@ const findReceiveReportData = async ({ skip, limit, where }) => {
 
 // ─── Phase 1: New report repos ─────────────────────────────────────────────────
 
-const findOverdueBorrows = async ({ skip, limit, where }) => {
-  const [total, rows] = await Promise.all([
-    prisma.requisition_header.count({ where }),
-    prisma.requisition_header.findMany({
-      where, skip, take: limit,
-      orderBy: { due_date: 'asc' },
-      include: {
-        departments: { select: { id: true, name: true } },
-        profiles_requisition_header_requester_idToprofiles: {
-          select: {
-            firstname_th: true, lastname_th: true,
-            firstname_en: true, lastname_en: true,
-            title: { select: { name: true, short_name: true } },
-          },
-        },
-        requisition_item: {
-          include: {
-            items: { select: { id: true, code: true, name: true, unit: { select: { name: true } } } },
-          },
-        },
-      },
-    }),
-  ]);
-  return { total, rows };
-};
 
 const findIssuedItemRanking = async ({ dateFrom, dateTo, categoryId, warehouseId }) => {
   const headerWhere = {
@@ -492,30 +468,6 @@ const findInventoryValue = async ({ categoryId, warehouseId }) => {
   });
 };
 
-const findReturnConditionData = async ({ skip, limit, where }) => {
-  const [total, rows] = await Promise.all([
-    prisma.return_log.count({ where }),
-    prisma.return_log.findMany({
-      where, skip, take: limit,
-      orderBy: { return_date: 'desc' },
-      include: {
-        requisition_item: {
-          include: {
-            items: {
-              select: {
-                id: true, code: true, name: true,
-                unit:       { select: { name: true } },
-                categories: { select: { name: true } },
-              },
-            },
-          },
-        },
-      },
-    }),
-  ]);
-  return { total, rows };
-};
-
 const findDeptConsumptionData = async ({ dateFrom, dateTo, categoryId }) => {
   return prisma.requisition_item.findMany({
     where: {
@@ -572,12 +524,10 @@ module.exports = {
   findProfilesByIds,
   findReceiveReportData,
   // Phase 1
-  findOverdueBorrows,
   findIssuedItemRanking,
   findItemsByStock,
   findHistoricalInventoryByReceive,
   findMovementSumsAfterDate,
   findInventoryValue,
-  findReturnConditionData,
   findDeptConsumptionData,
 };

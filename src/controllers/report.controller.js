@@ -124,14 +124,6 @@ const getReceiveReport = async (req, res, next) => {
 
 // ─── Phase 1 Controllers ──────────────────────────────────────────────────────
 
-const getOverdueBorrows = async (req, res, next) => {
-  try {
-    const { page, limit } = getPaginationParams(req.query);
-    const { dateFrom, dateTo, departmentId, search } = req.query;
-    res.json(await service.getOverdueBorrows({ page, limit, dateFrom, dateTo, departmentId, search }));
-  } catch (e) { next(e); }
-};
-
 const getItemRanking = async (req, res, next) => {
   try {
     const { page, limit } = getPaginationParams(req.query);
@@ -144,14 +136,6 @@ const getInventoryValue = async (req, res, next) => {
   try {
     const { categoryId, warehouseId, asOfDate } = req.query;
     res.json(await service.getInventoryValue({ categoryId, warehouseId, asOfDate: asOfDate || null }));
-  } catch (e) { next(e); }
-};
-
-const getReturnCondition = async (req, res, next) => {
-  try {
-    const { page, limit } = getPaginationParams(req.query);
-    const { dateFrom, dateTo, search } = req.query;
-    res.json(await service.getReturnCondition({ page, limit, dateFrom, dateTo, search }));
   } catch (e) { next(e); }
 };
 
@@ -177,9 +161,7 @@ module.exports = {
   getInventoryBalanceSummary,
   getReceiveReport,
   // Phase 1
-  getOverdueBorrows,
   getItemRanking,
   getInventoryValue,
-  getReturnCondition,
   getDeptConsumption,
 };

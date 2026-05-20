@@ -618,19 +618,32 @@ const getReturnRequestById = async (id) => {
     const mapped = DTO.mapReturnRequestResponse(request);
     const enriched = await enrichReturnRequestWithUnitDetails(mapped);
 
-    // เติมข้อมูลผู้ดำเนินการรับคืน (ดึงจาก log ล่าสุดของใบนี้)
-    enriched.processed_by = null;
-    enriched.processed_by_name = null;
+    // ผู้รับของ: ใช้ recieve_by ในตารางก่อน แล้ว fallback ชื่อจาก log
     enriched.processed_at = null;
-    try {
-        const log = await reusableRepo.selectLatestReturnProcessLog(request.doc_no);
-        if (log?.performed_by) {
-            enriched.processed_by = log.performed_by;
-            enriched.processed_by_name = log.performed_by_name || null;
-            enriched.processed_at = log.created_at || null;
+    enriched.processed_by = mapped.recieve_by || null;
+    enriched.processed_by_name = mapped.recieve_by_name || null;
+
+    if (mapped.recieve_by) {
+        if ((request.status || '').toString().toUpperCase() === RETURN_REQUEST_STATUS.COMPLETED) {
+            enriched.processed_at = request.updated_at || null;
         }
-    } catch {
-        /* ignore: optional enrichment */
+    }
+
+    if (!enriched.processed_by_name) {
+        try {
+            const log = await reusableRepo.selectLatestReturnProcessLog(request.doc_no);
+            if (!enriched.processed_by && log?.performed_by) {
+                enriched.processed_by = log.performed_by;
+            }
+            if (!enriched.processed_by_name) {
+                enriched.processed_by_name = log?.performed_by_name || null;
+            }
+            if (!enriched.processed_at && log?.created_at) {
+                enriched.processed_at = log.created_at;
+            }
+        } catch {
+            /* ignore: optional enrichment */
+        }
     }
 
     return enriched;
@@ -862,13 +875,15 @@ const processReturnRequest = async (id, payload = {}, userSession = null) => {
             }
         }
 
-        const updated = await reusableRepo.updateReturnRequestById(
-            id,
-            {
-                status: payload.complete === false ? RETURN_REQUEST_STATUS.PROCESSING : RETURN_REQUEST_STATUS.COMPLETED,
-            },
-            tx
-        );
+        const isCompleting = payload.complete !== false;
+        const updateData = {
+            status: isCompleting ? RETURN_REQUEST_STATUS.COMPLETED : RETURN_REQUEST_STATUS.PROCESSING,
+        };
+        if (isCompleting && processedBy) {
+            updateData.recieve_by = processedBy;
+        }
+
+        const updated = await reusableRepo.updateReturnRequestById(id, updateData, tx);
 
         return DTO.mapReturnRequestResponse(updated);
     });

@@ -89,7 +89,13 @@ const parseAttachmentList = (raw) => {
 /**
  * 📤 [RESPONSE MAPPER] สำหรับคำขอคืน (Return Request)
  */
-const mapReturnRequestResponse = (request = {}) => ({
+const { formatProfileName } = require('../utils/profileName');
+
+const mapReturnRequestResponse = (request = {}) => {
+    const recieveProfile = request.profiles_reusable_return_requests_recieve_byToprofiles;
+    const recieveByName = formatProfileName(recieveProfile);
+
+    return {
     id: request.id,
     doc_no: request.doc_no,
     department_id: request.department_id,
@@ -118,7 +124,12 @@ const mapReturnRequestResponse = (request = {}) => ({
     })),
     submit_attachments: parseAttachmentList(request.submit_attachments),
     process_attachments: parseAttachmentList(request.process_attachments),
-});
+    recieve_by: request.recieve_by || null,
+    recieve_by_name: recieveByName,
+    processed_by: request.recieve_by || null,
+    processed_by_name: recieveByName,
+    };
+};
 
 module.exports = {
     RECEIVE_TYPE,

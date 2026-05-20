@@ -117,6 +117,16 @@ const parseSubmitReturnPayload = (raw) => {
     return { ...parsed, items };
 };
 
+const parseVerifiedReturnPayload = (raw) => {
+    const parsed = safeJsonParse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return {
+        verified_by: parsed.verified_by || null,
+        verified_by_id: parsed.verified_by_id || null,
+        verified_at: parsed.verified_at || null,
+    };
+};
+
 /**
  * 1. สร้างใบเบิก/ยืมพัสดุ
  */
@@ -325,10 +335,29 @@ const getRequisitionDetail = async (headerId) => {
         }
     }
 
-    // ถ้ารอตรวจรับคืน — ดึง snapshot ที่ requester ส่งมา เพื่อแสดงสภาพ/จำนวน (read-only)
-    if (mapped.status === REQ_STATUS.PENDING_RETURN_CHECK) {
+    // ดึง snapshot ที่ผู้ยืมส่งคืน — ใช้แสดงรายละเอียดตอนตรวจรับหรือดูประวัติ
+    if (
+        mapped.type === 'BORROW'
+        && (mapped.status === REQ_STATUS.PENDING_RETURN_CHECK || mapped.status === REQ_STATUS.COMPLETED)
+    ) {
         const log = await requisitionRepo.selectLatestReturnSubmissionLog(mapped.doc_no);
         mapped.pending_return_submission = parseSubmitReturnPayload(log?.description || null) || null;
+    }
+
+    if (mapped.type === 'BORROW' && mapped.status === REQ_STATUS.COMPLETED) {
+        const verifyLog = await requisitionRepo.selectLatestReturnVerifyLog(mapped.doc_no);
+        const verifyPayload = parseVerifiedReturnPayload(verifyLog?.description || null);
+        const verifiedById = verifyPayload?.verified_by_id || verifyLog?.created_by_id || null;
+        const verifiedAt = verifyPayload?.verified_at || verifyLog?.created_at || null;
+        const verifiedByName =
+            verifyLog?.verified_by_name
+            || verifyPayload?.verified_by
+            || verifyLog?.created_by
+            || null;
+        mapped.return_verified_by = verifyPayload?.verified_by || verifyLog?.created_by || null;
+        mapped.return_verified_by_id = verifiedById;
+        mapped.return_verified_by_name = verifiedByName;
+        mapped.return_verified_at = verifiedAt;
     }
 
     return mapped;

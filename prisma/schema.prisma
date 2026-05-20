@@ -91,9 +91,9 @@ model requisition_header {
   borrower_id                                        String?            @db.Uuid
   department_id                                      Int?
   /// เอกสาร/รูปการคืน: ผู้ยืมแนบตอน submit return (BORROW). JSON array ของ {url, public_id, filename, uploaded_at}
-  return_submit_attachments                          Json?              @db.JsonB
+  return_submit_attachments                          Json?
   /// เอกสาร/รูปการคืน: เจ้าหน้าที่คลังถ่ายตอน verify return. JSON array ของ {url, public_id, filename, uploaded_at}
-  return_verify_attachments                          Json?              @db.JsonB
+  return_verify_attachments                          Json?
   profiles_requisition_header_approver_idToprofiles  profiles?          @relation("requisition_header_approver_idToprofiles", fields: [approver_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_req_header_approver")
   departments                                        departments?       @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_department")
   profiles_requisition_header_requester_idToprofiles profiles           @relation("requisition_header_requester_idToprofiles", fields: [requester_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_req_header_requester")
@@ -227,23 +227,25 @@ model departments {
 }
 
 model reusable_return_requests {
-  id                  Int                             @id @default(autoincrement())
-  doc_no              String                          @unique @db.VarChar(50)
-  department_id       Int
-  preferred_pickup_at DateTime?                       @db.Timestamptz(6)
-  note                String?
-  status              String                          @default("REQUESTED") @db.VarChar(20)
-  requested_by        String?                         @db.Uuid
-  created_at          DateTime                        @default(now()) @db.Timestamptz(6)
-  updated_at          DateTime                        @default(now()) @updatedAt @db.Timestamptz(6)
-  deleted_at          DateTime?                       @db.Timestamptz(6)
+  id                                                     Int                             @id @default(autoincrement())
+  doc_no                                                 String                          @unique @db.VarChar(50)
+  department_id                                          Int
+  preferred_pickup_at                                    DateTime?                       @db.Timestamptz(6)
+  note                                                   String?
+  status                                                 String                          @default("REQUESTED") @db.VarChar(20)
+  requested_by                                           String?                         @db.Uuid
+  created_at                                             DateTime                        @default(now()) @db.Timestamptz(6)
+  updated_at                                             DateTime                        @default(now()) @updatedAt @db.Timestamptz(6)
+  deleted_at                                             DateTime?                       @db.Timestamptz(6)
   /// เอกสาร/รูปการคืน: แผนกแนบตอนสร้างคำขอคืน. JSON array ของ {url, public_id, filename, uploaded_at}
-  submit_attachments  Json?                           @db.JsonB
+  submit_attachments                                     Json?
   /// เอกสาร/รูปการคืน: เจ้าหน้าที่คลังถ่ายตอนรับคืน (process). JSON array ของ {url, public_id, filename, uploaded_at}
-  process_attachments Json?                           @db.JsonB
-  request_items       reusable_return_request_items[]
-  profiles            profiles?                       @relation(fields: [requested_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_requester_id")
-  departments         departments                     @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reusable_return_request_department")
+  process_attachments                                    Json?
+  recieve_by                                             String?                         @db.Uuid
+  request_items                                          reusable_return_request_items[]
+  profiles                                               profiles?                       @relation(fields: [requested_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_requester_id")
+  departments                                            departments                     @relation(fields: [department_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reusable_return_request_department")
+  profiles_reusable_return_requests_recieve_byToprofiles profiles?                       @relation("reusable_return_requests_recieve_byToprofiles", fields: [recieve_by], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_user_id")
 
   @@index([department_id], map: "idx_reusable_return_requests_department")
   @@index([status], map: "idx_reusable_return_requests_status")
@@ -967,43 +969,44 @@ model lookup_relative {
 }
 
 model profiles {
-  id                                                           String                     @id(map: "users_pkey") @db.Uuid
-  firstname_th                                                 String?                    @db.VarChar(255)
-  lastname_th                                                  String?                    @db.VarChar(255)
-  firstname_en                                                 String?                    @db.VarChar(255)
-  lastname_en                                                  String?                    @db.VarChar(255)
-  sex_id                                                       Int?
-  birth_date                                                   DateTime?                  @db.Date
-  nationality                                                  Int?
-  race                                                         Int?
-  mstatus                                                      Int?
-  occupation                                                   Int?
-  phone                                                        String?                    @db.VarChar(15)
-  current_maininscl                                            Int?
-  subdistrict_code                                             Int?
-  district_code                                                Int?
-  province_code                                                Int?
-  zip_code                                                     Int?
-  address_detail                                               String?                    @db.VarChar(255)
-  cid                                                          String?                    @db.VarChar(13)
-  profession_id                                                String?                    @db.VarChar(50)
-  title_code                                                   String?                    @db.VarChar(3)
-  status_                                                      String?                    @map("status ") @db.VarChar
-  created_at                                                   DateTime?                  @default(now()) @db.Timestamptz(6)
-  updated_at                                                   DateTime?                  @db.Timestamptz(6)
-  deleted_at                                                   DateTime?                  @db.Timestamptz(6)
-  department_id                                                Int[]                      @default([])
-  system_id                                                    Int[]                      @default([])
-  role_id                                                      Int?
-  notification_recipients                                      notification_recipients[]
-  notifications_created                                        notifications[]            @relation("notifications_created_by")
-  receive_batch                                                receive_batch[]
-  receive_header                                               receive_header[]
-  requisition_header_requisition_header_approver_idToprofiles  requisition_header[]       @relation("requisition_header_approver_idToprofiles")
-  requisition_header_requisition_header_requester_idToprofiles requisition_header[]       @relation("requisition_header_requester_idToprofiles")
-  return_log                                                   return_log[]
-  reusable_return_requests                                     reusable_return_requests[]
-  users                                                        users                      @relation(fields: [id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "users_id_fkey")
+  id                                                                     String                     @id(map: "users_pkey") @db.Uuid
+  firstname_th                                                           String?                    @db.VarChar(255)
+  lastname_th                                                            String?                    @db.VarChar(255)
+  firstname_en                                                           String?                    @db.VarChar(255)
+  lastname_en                                                            String?                    @db.VarChar(255)
+  sex_id                                                                 Int?
+  birth_date                                                             DateTime?                  @db.Date
+  nationality                                                            Int?
+  race                                                                   Int?
+  mstatus                                                                Int?
+  occupation                                                             Int?
+  phone                                                                  String?                    @db.VarChar(15)
+  current_maininscl                                                      Int?
+  subdistrict_code                                                       Int?
+  district_code                                                          Int?
+  province_code                                                          Int?
+  zip_code                                                               Int?
+  address_detail                                                         String?                    @db.VarChar(255)
+  cid                                                                    String?                    @db.VarChar(13)
+  profession_id                                                          String?                    @db.VarChar(50)
+  title_code                                                             String?                    @db.VarChar(3)
+  status_                                                                String?                    @map("status ") @db.VarChar
+  created_at                                                             DateTime?                  @default(now()) @db.Timestamptz(6)
+  updated_at                                                             DateTime?                  @db.Timestamptz(6)
+  deleted_at                                                             DateTime?                  @db.Timestamptz(6)
+  department_id                                                          Int[]                      @default([])
+  system_id                                                              Int[]                      @default([])
+  role_id                                                                Int?
+  notification_recipients                                                notification_recipients[]
+  notifications_created                                                  notifications[]            @relation("notifications_created_by")
+  receive_batch                                                          receive_batch[]
+  receive_header                                                         receive_header[]
+  requisition_header_requisition_header_approver_idToprofiles            requisition_header[]       @relation("requisition_header_approver_idToprofiles")
+  requisition_header_requisition_header_requester_idToprofiles           requisition_header[]       @relation("requisition_header_requester_idToprofiles")
+  return_log                                                             return_log[]
+  reusable_return_requests                                               reusable_return_requests[]
+  reusable_return_requests_reusable_return_requests_recieve_byToprofiles reusable_return_requests[] @relation("reusable_return_requests_recieve_byToprofiles")
+  users                                                                  users                      @relation(fields: [id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "users_id_fkey")
 
   @@schema("public")
 }

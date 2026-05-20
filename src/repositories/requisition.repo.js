@@ -1,4 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
+const { selectProfileDisplayName } = require('../utils/profileName');
 const prisma = new PrismaClient();
 
 // --- Helper: Search Filter ---
@@ -153,6 +154,49 @@ const selectLatestReturnSubmissionLog = async (docNo, tx = prisma) => {
             created_by_id: true,
         },
     });
+};
+
+/** log ยืนยันรับคืนจากคลัง (VERIFY_RETURN) — ใช้แสดงผู้รับของ */
+const selectLatestReturnVerifyLog = async (docNo, tx = prisma) => {
+    const code = (docNo || '').toString();
+    if (!code) return null;
+    const log = await tx.logs_transaction.findFirst({
+        where: {
+            module: 'WAREHOUSE',
+            action: 'VERIFY_RETURN',
+            code,
+        },
+        orderBy: { created_at: 'desc' },
+        select: {
+            description: true,
+            created_at: true,
+            created_by: true,
+            created_by_id: true,
+        },
+    });
+    if (!log) return null;
+
+    let profileId = log.created_by_id ? String(log.created_by_id) : null;
+    if (!profileId && log.description) {
+        try {
+            const parsed = JSON.parse(log.description);
+            if (parsed?.verified_by_id) profileId = String(parsed.verified_by_id);
+        } catch { /* ignore */ }
+    }
+    let verifiedByName = log.created_by || null;
+    if (log.description) {
+        try {
+            const parsed = JSON.parse(log.description);
+            if (parsed?.verified_by) verifiedByName = parsed.verified_by;
+        } catch { /* ignore */ }
+    }
+    if (!profileId) return { ...log, verified_by_name: verifiedByName };
+
+    const displayName = await selectProfileDisplayName(profileId, tx);
+    return {
+        ...log,
+        verified_by_name: displayName || verifiedByName || null,
+    };
 };
 
 const selectItemsForRequisition = async (itemIds = [], tx = prisma) => {
@@ -494,6 +538,7 @@ module.exports = {
     getBorrowerById,
     updateBorrowerDocument,
     selectLatestReturnSubmissionLog,
+    selectLatestReturnVerifyLog,
     selectItemsForRequisition,
     SelectRequisitionById,
     SelectAllRequisitions,

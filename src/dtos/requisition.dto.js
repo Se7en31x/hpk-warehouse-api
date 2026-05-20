@@ -126,6 +126,10 @@ const mapRequisitionDetailResponse = (data) => {
         borrower_details: data.borrower_details || null,
         return_submit_attachments: parseAttachmentList(data.return_submit_attachments),
         return_verify_attachments: parseAttachmentList(data.return_verify_attachments),
+        return_verified_by: data.return_verified_by ?? null,
+        return_verified_by_id: data.return_verified_by_id ?? null,
+        return_verified_by_name: data.return_verified_by_name ?? null,
+        return_verified_at: data.return_verified_at ?? null,
     };
 };
 

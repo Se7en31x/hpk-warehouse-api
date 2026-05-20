@@ -1,4 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
+const { selectProfileDisplayName } = require('../utils/profileName');
 
 const prisma = new PrismaClient();
 
@@ -29,6 +30,15 @@ const unitInclude = {
 const returnRequestInclude = {
     departments: { select: { id: true, name: true } },
     profiles: {
+        select: {
+            id: true,
+            firstname_th: true,
+            lastname_th: true,
+            firstname_en: true,
+            lastname_en: true,
+        },
+    },
+    profiles_reusable_return_requests_recieve_byToprofiles: {
         select: {
             id: true,
             firstname_th: true,
@@ -282,17 +292,10 @@ const selectLatestReturnProcessLog = async (docNo, tx = prisma) => {
     });
     if (!log?.performed_by) return log || null;
 
-    const profile = await tx.profiles.findUnique({
-        where: { id: log.performed_by },
-        select: { firstname_th: true, lastname_th: true, email: true },
-    });
-    const fullName = [profile?.firstname_th, profile?.lastname_th]
-        .filter(Boolean)
-        .join(' ')
-        .trim();
+    const performed_by_name = await selectProfileDisplayName(log.performed_by, tx);
     return {
         ...log,
-        performed_by_name: fullName || profile?.email || null,
+        performed_by_name,
     };
 };
 
